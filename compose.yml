@@ -1,0 +1,85 @@
+services:
+  caddy:
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    environment:
+      CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - fildah-web
+      - rxchat-web
+
+  api:
+    build:
+      context: ../fildah-api
+    restart: unless-stopped
+    env_file:
+      - ./.env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_SSL_REQUIRE: "False"
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
+    volumes:
+      - django_media:/app/media
+    depends_on:
+      - postgres
+      - qdrant
+    expose:
+      - "8000"
+
+  fildah-web:
+    build:
+      context: ../fildah-web
+      args:
+        VITE_API_BASE_URL: ${FRONTEND_API_BASE_URL}
+    restart: unless-stopped
+    expose:
+      - "80"
+
+  rxchat-web:
+    build:
+      context: ../rxchat-web
+      args:
+        VITE_API_BASE_URL: ${FRONTEND_API_BASE_URL}
+        UNDER_CONSTRUCTION: ${RXCHAT_UNDER_CONSTRUCTION:-false}
+    restart: unless-stopped
+    expose:
+      - "80"
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  qdrant:
+    image: qdrant/qdrant:v1.17.1
+    restart: unless-stopped
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
+    volumes:
+      - qdrant_data:/qdrant/storage
+    expose:
+      - "6333"
+      - "6334"
+
+volumes:
+  postgres_data:
+  qdrant_data:
+  django_media:
+  caddy_data:
+  caddy_config:
