@@ -132,3 +132,14 @@ Visit your domains in the browser to make sure everything works:
 - **View logs (to see errors):** `docker compose -f compose.yml logs -f`
 - **Restart the whole stack:** `docker compose -f compose.yml restart`
 - **Stop everything:** `docker compose -f compose.yml down`
+
+
+## CI/CD Cleanup Policy
+
+The production deploy workflow keeps deployment storage small automatically:
+
+- VPS backups are stored under `/srv/fildah/backups` and only the newest 3 `deploy-*` backup folders are kept.
+- GHCR image cleanup keeps the newest 3 package versions for each deployed app image.
+- The cleanup also protects the `main` tag and the exact image tag being deployed so production is not left pointing at a deleted image.
+
+For GHCR cleanup, add `GHCR_CLEANUP_TOKEN` to the deploy repo's `production` environment secrets. It should be a GitHub personal access token that can read and delete package versions.

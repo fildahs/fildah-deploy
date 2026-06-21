@@ -1,0 +1,276 @@
+name: Deploy Production
+
+on:
+  repository_dispatch:
+    types:
+      - deploy-service
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Service to deploy
+        required: true
+        type: choice
+        options:
+          - api
+          - fildah-web
+          - rxchat-web
+          - all
+      image:
+        description: Full image reference for one-service deploys
+        required: false
+        type: string
+      source_repo:
+        description: Source repository for audit trail
+        required: false
+        type: string
+      commit_sha:
+        description: Source commit SHA for audit trail
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to VPS
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SERVICE: ${{ github.event.client_payload.service || inputs.service }}
+      IMAGE: ${{ github.event.client_payload.image || inputs.image }}
+      SOURCE_REPO: ${{ github.event.client_payload.source_repo || inputs.source_repo }}
+      COMMIT_SHA: ${{ github.event.client_payload.commit_sha || inputs.commit_sha }}
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      GHCR_READ_USER: ${{ secrets.GHCR_READ_USER }}
+      GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
+      GHCR_CLEANUP_TOKEN: ${{ secrets.GHCR_CLEANUP_TOKEN }}
+      SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+      KEEP_VPS_BACKUPS: "3"
+      KEEP_GHCR_IMAGES: "3"
+    steps:
+      - name: Check out deploy config
+        uses: actions/checkout@v4
+
+      - name: Validate deployment request
+        run: |
+          set -eu
+          case "$SERVICE" in
+            api|fildah-web|rxchat-web|all) ;;
+            *) echo "Unknown service: $SERVICE" >&2; exit 1 ;;
+          esac
+          if [ "$SERVICE" != "all" ] && [ -z "$IMAGE" ]; then
+            echo "image is required for one-service deployments" >&2
+            exit 1
+          fi
+
+      - name: Configure SSH
+        run: |
+          set -eu
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/fildah_vps
+          chmod 600 ~/.ssh/fildah_vps
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+
+      - name: Sync deploy config to VPS
+        run: |
+          set -eu
+          rsync -az --delete \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='.env' \
+            -e "ssh -i ~/.ssh/fildah_vps" \
+            ./ "$VPS_USER@$VPS_HOST:/srv/fildah/deploy/"
+
+      - name: Deploy selected service
+        run: |
+          set -eu
+          ssh -i ~/.ssh/fildah_vps "$VPS_USER@$VPS_HOST" \
+            SERVICE="$SERVICE" \
+            IMAGE="$IMAGE" \
+            GHCR_READ_USER="$GHCR_READ_USER" \
+            GHCR_READ_TOKEN="$GHCR_READ_TOKEN" \
+            KEEP_VPS_BACKUPS="$KEEP_VPS_BACKUPS" \
+            SOURCE_REPO="$SOURCE_REPO" \
+            COMMIT_SHA="$COMMIT_SHA" \
+            'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /srv/fildah/deploy
+
+          if [ ! -f .env ]; then
+            echo "/srv/fildah/deploy/.env is missing" >&2
+            exit 1
+          fi
+
+          set_image_var() {
+            var="$1"
+            value="$2"
+            if grep -q "^${var}=" .env; then
+              sed -i "s|^${var}=.*|${var}=${value}|" .env
+            else
+              printf '\n%s=%s\n' "$var" "$value" >> .env
+            fi
+          }
+
+          case "$SERVICE" in
+            api)
+              set_image_var FILDAH_API_IMAGE "$IMAGE"
+              targets="api"
+              ;;
+            fildah-web)
+              set_image_var FILDAH_WEB_IMAGE "$IMAGE"
+              targets="fildah-web"
+              ;;
+            rxchat-web)
+              set_image_var RXCHAT_WEB_IMAGE "$IMAGE"
+              targets="rxchat-web"
+              ;;
+            all)
+              targets="api fildah-web rxchat-web caddy"
+              ;;
+          esac
+
+          backup_root="/srv/fildah/backups"
+          backup_dir="$backup_root/deploy-$(date -u +%Y%m%dT%H%M%SZ)"
+          mkdir -p "$backup_dir"
+          chmod 700 "$backup_dir"
+          cp compose.yml Caddyfile .env "$backup_dir"/
+          docker compose -f compose.yml exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$backup_dir/postgres.sql.gz"
+          old_backups=$(find "$backup_root" -mindepth 1 -maxdepth 1 -type d -name 'deploy-*' -printf '%f\n' \
+            | sort -r \
+            | tail -n +$((KEEP_VPS_BACKUPS + 1)))
+          if [ -n "$old_backups" ]; then
+            printf '%s\n' "$old_backups" | while IFS= read -r old_backup; do
+              [ -n "$old_backup" ] || continue
+              rm -rf -- "$backup_root/$old_backup"
+            done
+          fi
+
+          echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u "$GHCR_READ_USER" --password-stdin
+          docker compose -f compose.yml config >/dev/null
+          docker compose -f compose.yml pull $targets
+          docker compose -f compose.yml up -d $targets
+          docker compose -f compose.yml up -d caddy
+
+          if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
+            docker compose -f compose.yml exec -T api python manage.py setup_qdrant
+            docker compose -f compose.yml exec -T api python - <<'PY'
+          import urllib.request
+
+          request = urllib.request.Request(
+              "http://127.0.0.1:8000/health/",
+              headers={"Host": "api.fildah.com"},
+          )
+          with urllib.request.urlopen(request, timeout=10) as response:
+              body = response.read().decode()
+              if response.status != 200 or "ok" not in body:
+                  raise SystemExit(f"Unexpected health response: {response.status} {body}")
+          PY
+          fi
+
+          curl -fsS --max-time 20 https://api.fildah.com/health/ >/dev/null
+          curl -fsSI --max-time 20 https://www.fildah.com >/dev/null
+          curl -fsSI --max-time 20 https://rxchat.fildah.com >/dev/null
+          docker compose -f compose.yml ps
+          printf 'Deployed %s from %s at %s\n' "$SERVICE" "$SOURCE_REPO" "$COMMIT_SHA"
+          REMOTE
+
+
+      - name: Cleanup old GHCR images
+        env:
+          SERVICE: ${{ env.SERVICE }}
+          IMAGE: ${{ env.IMAGE }}
+          KEEP_GHCR_IMAGES: ${{ env.KEEP_GHCR_IMAGES }}
+          GHCR_CLEANUP_TOKEN: ${{ env.GHCR_CLEANUP_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          owner = "fildahs"
+          service_packages = {
+              "api": "fildah-api",
+              "fildah-web": "fildah-web",
+              "rxchat-web": "rxchat-web",
+          }
+          service = os.environ["SERVICE"]
+          image = os.environ.get("IMAGE", "")
+          keep = int(os.environ.get("KEEP_GHCR_IMAGES", "3"))
+          token = os.environ.get("GHCR_CLEANUP_TOKEN", "").strip()
+
+          if not token:
+              print("GHCR_CLEANUP_TOKEN is not set; skipping GHCR image cleanup.")
+              raise SystemExit(0)
+
+          services = service_packages if service == "all" else {service: service_packages[service]}
+
+          def github_request(method, url):
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      "Accept": "application/vnd.github+json",
+                      "Authorization": f"Bearer {token}",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+                  method=method,
+              )
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      raw = response.read().decode()
+                      return json.loads(raw) if raw else None
+              except urllib.error.HTTPError as exc:
+                  body = exc.read().decode(errors="replace")
+                  raise SystemExit(f"GitHub API {method} {url} failed: {exc.code} {body}") from exc
+
+          def current_tag_for(package):
+              prefix = f"ghcr.io/{owner}/{package}:"
+              if image.startswith(prefix):
+                  return image[len(prefix):]
+              return None
+
+          for _, package in services.items():
+              encoded_package = urllib.parse.quote(package, safe="")
+              versions = []
+              for page in range(1, 101):
+                  url = (
+                      f"https://api.github.com/orgs/{owner}/packages/container/"
+                      f"{encoded_package}/versions?per_page=100&page={page}"
+                  )
+                  page_versions = github_request("GET", url) or []
+                  versions.extend(page_versions)
+                  if len(page_versions) < 100:
+                      break
+
+              versions.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+              protected_tags = {"main"}
+              deployed_tag = current_tag_for(package)
+              if deployed_tag:
+                  protected_tags.add(deployed_tag)
+
+              keep_ids = {version["id"] for version in versions[:keep]}
+              deleted = 0
+              for version in versions:
+                  tags = set(
+                      version.get("metadata", {})
+                      .get("container", {})
+                      .get("tags", [])
+                  )
+                  if version["id"] in keep_ids or tags & protected_tags:
+                      continue
+                  url = (
+                      f"https://api.github.com/orgs/{owner}/packages/container/"
+                      f"{encoded_package}/versions/{version['id']}"
+                  )
+                  github_request("DELETE", url)
+                  deleted += 1
+
+              print(f"{package}: kept newest {keep} plus protected tags {sorted(protected_tags)}; deleted {deleted} old version(s).")
+          PY

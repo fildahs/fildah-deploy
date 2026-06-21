@@ -17,8 +17,7 @@ services:
       - rxchat-web
 
   api:
-    build:
-      context: ../fildah-api
+    image: ${FILDAH_API_IMAGE:-ghcr.io/fildahs/fildah-api:main}
     restart: unless-stopped
     env_file:
       - ./.env
@@ -36,20 +35,13 @@ services:
       - "8000"
 
   fildah-web:
-    build:
-      context: ../fildah-web
-      args:
-        VITE_API_BASE_URL: ${FRONTEND_API_BASE_URL}
+    image: ${FILDAH_WEB_IMAGE:-ghcr.io/fildahs/fildah-web:main}
     restart: unless-stopped
     expose:
       - "80"
 
   rxchat-web:
-    build:
-      context: ../rxchat-web
-      args:
-        VITE_API_BASE_URL: ${FRONTEND_API_BASE_URL}
-        UNDER_CONSTRUCTION: ${RXCHAT_UNDER_CONSTRUCTION:-false}
+    image: ${RXCHAT_WEB_IMAGE:-ghcr.io/fildahs/rxchat-web:main}
     restart: unless-stopped
     expose:
       - "80"
