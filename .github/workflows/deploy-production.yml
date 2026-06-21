@@ -15,8 +15,8 @@ on:
           - fildah-web
           - rxchat-web
           - all
-      image:
-        description: Full image reference for one-service deploys
+      image_tag:
+        description: Image tag to deploy for one-service rollbacks, for example a commit SHA
         required: false
         type: string
       source_repo:
@@ -42,7 +42,7 @@ jobs:
     environment: production
     env:
       SERVICE: ${{ github.event.client_payload.service || inputs.service }}
-      IMAGE: ${{ github.event.client_payload.image || inputs.image }}
+      IMAGE_TAG: ${{ github.event.client_payload.image_tag || inputs.image_tag }}
       SOURCE_REPO: ${{ github.event.client_payload.source_repo || inputs.source_repo }}
       COMMIT_SHA: ${{ github.event.client_payload.commit_sha || inputs.commit_sha }}
       VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -51,8 +51,8 @@ jobs:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       GHCR_CLEANUP_TOKEN: ${{ secrets.GHCR_CLEANUP_TOKEN }}
       SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-      KEEP_VPS_BACKUPS: "3"
-      KEEP_GHCR_IMAGES: "3"
+      KEEP_VPS_BACKUPS: ${{ vars.KEEP_VPS_BACKUPS || '10' }}
+      KEEP_GHCR_IMAGES: ${{ vars.KEEP_GHCR_IMAGES || '10' }}
     steps:
       - name: Check out deploy config
         uses: actions/checkout@v4
@@ -64,10 +64,24 @@ jobs:
             api|fildah-web|rxchat-web|all) ;;
             *) echo "Unknown service: $SERVICE" >&2; exit 1 ;;
           esac
-          if [ "$SERVICE" != "all" ] && [ -z "$IMAGE" ]; then
-            echo "image is required for one-service deployments" >&2
+          if [ "$SERVICE" = "all" ]; then
+            if [ -n "$IMAGE_TAG" ]; then
+              echo "image_tag is only supported for one-service deployments" >&2
+              exit 1
+            fi
+            exit 0
+          fi
+          if [ -z "$IMAGE_TAG" ]; then
+            echo "image_tag is required for one-service deployments" >&2
             exit 1
           fi
+          case "$SERVICE" in
+            api) package="fildah-api" ;;
+            fildah-web) package="fildah-web" ;;
+            rxchat-web) package="rxchat-web" ;;
+          esac
+          IMAGE="ghcr.io/fildahs/${package}:${IMAGE_TAG}"
+          printf 'IMAGE=%s\n' "$IMAGE" >> "$GITHUB_ENV"
 
       - name: Configure SSH
         run: |
@@ -184,7 +198,6 @@ jobs:
       - name: Cleanup old GHCR images
         env:
           SERVICE: ${{ env.SERVICE }}
-          IMAGE: ${{ env.IMAGE }}
           KEEP_GHCR_IMAGES: ${{ env.KEEP_GHCR_IMAGES }}
           GHCR_CLEANUP_TOKEN: ${{ env.GHCR_CLEANUP_TOKEN }}
         run: |

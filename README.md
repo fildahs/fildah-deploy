@@ -133,13 +133,35 @@ Visit your domains in the browser to make sure everything works:
 - **Restart the whole stack:** `docker compose -f compose.yml restart`
 - **Stop everything:** `docker compose -f compose.yml down`
 
+## Manual Rollback
+
+Every app image is tagged with the Git commit SHA that built it. To roll back one service:
+
+1. Go to GitHub Actions in the `fildah-deploy` repo.
+2. Open the `Deploy Production` workflow.
+3. Click `Run workflow`.
+4. Choose one service: `api`, `fildah-web`, or `rxchat-web`.
+5. Put the old commit SHA in `image_tag`.
+6. Approve the `production` environment deployment.
+
+The workflow will turn the service and tag into the right GHCR image name, for example:
+```text
+service: api
+image_tag: abc123
+image used: ghcr.io/fildahs/fildah-api:abc123
+```
+
 
 ## CI/CD Cleanup Policy
 
 The production deploy workflow keeps deployment storage small automatically:
 
-- VPS backups are stored under `/srv/fildah/backups` and only the newest 3 `deploy-*` backup folders are kept.
-- GHCR image cleanup keeps the newest 3 package versions for each deployed app image.
+- VPS backups are stored under `/srv/fildah/backups` and only the newest 10 `deploy-*` backup folders are kept by default.
+- GHCR image cleanup keeps the newest 10 package versions for each deployed app image by default.
 - The cleanup also protects the `main` tag and the exact image tag being deployed so production is not left pointing at a deleted image.
 
 For GHCR cleanup, add `GHCR_CLEANUP_TOKEN` to the deploy repo's `production` environment secrets. It should be a GitHub personal access token that can read and delete package versions.
+
+Optional cleanup controls in the deploy repo:
+- `KEEP_VPS_BACKUPS`: repository or environment variable, defaults to `10`.
+- `KEEP_GHCR_IMAGES`: repository or environment variable, defaults to `10`.
