@@ -2,3 +2,4 @@
 *.dump
 *.sql
 qdrant-snapshots/
+command.md
