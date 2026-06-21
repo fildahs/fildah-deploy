@@ -1,23 +1,9 @@
-services:
-  caddy:
-    image: caddy:2.8-alpine
-    restart: unless-stopped
-    environment:
-      CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL}
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - api
-      - fildah-web
-      - rxchat-web
+name: fildah-local
 
+services:
   api:
-    image: ${FILDAH_API_IMAGE:-ghcr.io/fildahs/fildah-api:main}
+    build:
+      context: ../fildah-api
     restart: unless-stopped
     env_file:
       - ./.env
@@ -26,25 +12,38 @@ services:
       DATABASE_SSL_REQUIRE: "False"
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
+      DEBUG: "True"
+      ALLOWED_HOSTS: localhost,127.0.0.1,[::1]
+      ALLOWED_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174
+      CSRF_COOKIE_SECURE: "False"
+      SESSION_COOKIE_SECURE: "False"
+      SECURE_PROXY_SSL_ENABLED: "False"
     volumes:
       - django_media:/app/media
     depends_on:
       - postgres
       - qdrant
-    expose:
-      - "8000"
+    ports:
+      - "127.0.0.1:8000:8000"
 
   fildah-web:
-    image: ${FILDAH_WEB_IMAGE:-ghcr.io/fildahs/fildah-web:main}
+    build:
+      context: ../fildah-web
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
     restart: unless-stopped
-    expose:
-      - "80"
+    ports:
+      - "127.0.0.1:5173:80"
 
   rxchat-web:
-    image: ${RXCHAT_WEB_IMAGE:-ghcr.io/fildahs/rxchat-web:main}
+    build:
+      context: ../rxchat-web
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+        UNDER_CONSTRUCTION: ${RXCHAT_UNDER_CONSTRUCTION:-false}
     restart: unless-stopped
-    expose:
-      - "80"
+    ports:
+      - "127.0.0.1:5174:80"
 
   postgres:
     image: postgres:16-alpine
@@ -56,7 +55,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:5433:5432"
 
   qdrant:
     image: qdrant/qdrant:v1.17.1
@@ -65,12 +64,10 @@ services:
       QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
     volumes:
       - qdrant_data:/qdrant/storage
-    expose:
-      - "6333"
+    ports:
+      - "127.0.0.1:6333:6333"
 
 volumes:
   postgres_data:
   qdrant_data:
   django_media:
-  caddy_data:
-  caddy_config:

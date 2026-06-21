@@ -1,6 +1,6 @@
 # Fildah VPS Deployment Guide (Beginner Friendly)
 
-This folder contains the configuration needed to run your entire stack (`fildah-api`, `fildah-web`, and `rxchat-web`) on your own Virtual Private Server (VPS) instead of using Vercel.
+This folder contains the configuration needed to run your entire stack (`fildah-api`, `fildah-web`, and `rxchat-web`) on your own Virtual Private Server (VPS).
 
 ## 1. Prerequisites (Before touching the VPS)
 
@@ -115,12 +115,40 @@ To check the current collections:
 docker compose -f compose.yml run --rm api python manage.py shell -c "from rxchat.qdrant_service import _get_client; print([x.name for x in _get_client().get_collections().collections])"
 ```
 
-## 8. Start the Entire Application
+## 8. Start the Production Stack
 
-Now that data is restored, start everything up!
+Production pulls prebuilt app images and starts the stack:
 ```bash
-docker compose -f compose.yml up -d --build
+docker compose -f compose.yml up -d
 ```
+
+
+## Local Docker Development
+
+On your laptop, `deploy/.env` is the single real local env file. The VPS keeps its own separate `/srv/fildah/deploy/.env`.
+
+Start the full local stack from this folder:
+```bash
+docker compose -f compose.local.yml --env-file .env up -d --build
+```
+
+Local URLs:
+- API: `http://localhost:8000`
+- Fildah web: `http://localhost:5173`
+- RxChat web: `http://localhost:5174`
+- Qdrant dashboard: `http://localhost:6333/dashboard`
+
+DBeaver Postgres connection:
+- Host: `localhost`
+- Port: `5433`
+- Database, username, and password: use `POSTGRES_DB`, `POSTGRES_USER`, and `POSTGRES_PASSWORD` from `deploy/.env`.
+
+Stop the local stack:
+```bash
+docker compose -f compose.local.yml --env-file .env down
+```
+
+For quick backend-only work, run the API directly from `../fildah-api`. Django loads `../deploy/.env`; if `DATABASE_URL` is missing or blank, it uses SQLite.
 
 ## 9. Smoke Tests
 Visit your domains in the browser to make sure everything works:
