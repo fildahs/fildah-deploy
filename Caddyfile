@@ -6,10 +6,6 @@ fildah.com {
     redir https://www.fildah.com{uri} permanent
 }
 
-rx.fildah.com {
-    redir https://rxchat.fildah.com{uri} permanent
-}
-
 www.fildah.com {
     encode zstd gzip
     reverse_proxy fildah-web:80
