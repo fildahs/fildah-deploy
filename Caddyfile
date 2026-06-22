@@ -2,8 +2,8 @@
     email {$CADDY_ACME_EMAIL}
 }
 
-fildah.com {
-    redir https://www.fildah.com{uri} permanent
+fildah.com, www.fildah.com {
+    redir https://rxchat.fildah.com{uri} 302
 }
 
 www.fildah.com {
