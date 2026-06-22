@@ -12,6 +12,7 @@ on:
         type: choice
         options:
           - api
+          - caddy
           - fildah-web
           - rxchat-web
           - all
@@ -61,12 +62,12 @@ jobs:
         run: |
           set -eu
           case "$SERVICE" in
-            api|fildah-web|rxchat-web|all) ;;
+            api|caddy|fildah-web|rxchat-web|all) ;;
             *) echo "Unknown service: $SERVICE" >&2; exit 1 ;;
           esac
-          if [ "$SERVICE" = "all" ]; then
+          if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "caddy" ]; then
             if [ -n "$IMAGE_TAG" ]; then
-              echo "image_tag is only supported for one-service deployments" >&2
+              echo "image_tag is only supported for app image deployments" >&2
               exit 1
             fi
             exit 0
@@ -106,7 +107,7 @@ jobs:
           set -eu
           ssh -i ~/.ssh/fildah_vps "$VPS_USER@$VPS_HOST" \
             SERVICE="$SERVICE" \
-            IMAGE="$IMAGE" \
+            IMAGE="${IMAGE:-}" \
             GHCR_READ_USER="$GHCR_READ_USER" \
             GHCR_READ_TOKEN="$GHCR_READ_TOKEN" \
             KEEP_VPS_BACKUPS="$KEEP_VPS_BACKUPS" \
@@ -135,6 +136,9 @@ jobs:
             api)
               set_image_var FILDAH_API_IMAGE "$IMAGE"
               targets="api"
+              ;;
+            caddy)
+              targets="caddy"
               ;;
             fildah-web)
               set_image_var FILDAH_WEB_IMAGE "$IMAGE"
@@ -218,6 +222,10 @@ jobs:
           image = os.environ.get("IMAGE", "")
           keep = int(os.environ.get("KEEP_GHCR_IMAGES", "3"))
           token = os.environ.get("GHCR_CLEANUP_TOKEN", "").strip()
+
+          if service == "caddy":
+              print("Caddy deploy does not publish a GHCR image; skipping GHCR image cleanup.")
+              raise SystemExit(0)
 
           if not token:
               print("GHCR_CLEANUP_TOKEN is not set; skipping GHCR image cleanup.")
