@@ -171,7 +171,7 @@ jobs:
 
           docker compose -f compose.yml config >/dev/null
           if [ "$SERVICE" = "caddy" ]; then
-            docker compose -f compose.yml up -d caddy
+            docker compose -f compose.yml up -d --force-recreate caddy
             docker compose -f compose.yml restart caddy
           else
             echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u "$GHCR_READ_USER" --password-stdin
