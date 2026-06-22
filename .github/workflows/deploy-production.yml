@@ -168,7 +168,7 @@ jobs:
           echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u "$GHCR_READ_USER" --password-stdin
           docker compose -f compose.yml config >/dev/null
           docker compose -f compose.yml pull $targets
-          docker compose -f compose.yml up -d $targets
+          docker compose -f compose.yml up -d --force-recreate $targets
           docker compose -f compose.yml up -d caddy
 
           if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
