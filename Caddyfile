@@ -1,33 +1,28 @@
 {
-    email {$CADDY_ACME_EMAIL}
+	email {$CADDY_ACME_EMAIL}
 }
 
 fildah.com, www.fildah.com {
-    redir https://rxchat.fildah.com{uri} 302
-}
-
-www.fildah.com {
-    encode zstd gzip
-    reverse_proxy fildah-web:80
+	redir https://rxchat.fildah.com{uri} 302
 }
 
 rxchat.fildah.com {
-    encode zstd gzip
-    reverse_proxy rxchat-web:80
+	encode zstd gzip
+	reverse_proxy rxchat-web:80
 }
 
 api.fildah.com {
-    encode zstd gzip
-    redir / /admin/
-    reverse_proxy api:8000 {
-        flush_interval -1
-        header_up X-Forwarded-Proto {scheme}
-        header_up X-Forwarded-Host {host}
-    }
+	encode zstd gzip
+	redir / /admin/
+	reverse_proxy api:8000 {
+		flush_interval -1
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
 }
 
 qdrant.fildah.com {
-    encode zstd gzip
-    redir / /dashboard/
-    reverse_proxy qdrant:6333
+	encode zstd gzip
+	redir / /dashboard/
+	reverse_proxy qdrant:6333
 }
