@@ -13,6 +13,7 @@ services:
       - caddy_config:/config
     depends_on:
       - api
+      - auth-web
       - fildah-web
       - rxchat-web
 
@@ -33,6 +34,12 @@ services:
       - qdrant
     expose:
       - "8000"
+
+  auth-web:
+    image: ${AUTH_WEB_IMAGE:-ghcr.io/fildahs/auth-web:main}
+    restart: unless-stopped
+    expose:
+      - "80"
 
   fildah-web:
     image: ${FILDAH_WEB_IMAGE:-ghcr.io/fildahs/fildah-web:main}
