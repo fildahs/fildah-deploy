@@ -12,6 +12,7 @@ on:
         type: choice
         options:
           - api
+          - auth-web
           - caddy
           - fildah-web
           - rxchat-web
@@ -62,7 +63,7 @@ jobs:
         run: |
           set -eu
           case "$SERVICE" in
-            api|caddy|fildah-web|rxchat-web|all) ;;
+            api|auth-web|caddy|fildah-web|rxchat-web|all) ;;
             *) echo "Unknown service: $SERVICE" >&2; exit 1 ;;
           esac
           if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "caddy" ]; then
@@ -78,6 +79,7 @@ jobs:
           fi
           case "$SERVICE" in
             api) package="fildah-api" ;;
+            auth-web) package="auth-web" ;;
             fildah-web) package="fildah-web" ;;
             rxchat-web) package="rxchat-web" ;;
           esac
@@ -140,6 +142,10 @@ jobs:
             caddy)
               targets="caddy"
               ;;
+            auth-web)
+              set_image_var AUTH_WEB_IMAGE "$IMAGE"
+              targets="auth-web"
+              ;;
             fildah-web)
               set_image_var FILDAH_WEB_IMAGE "$IMAGE"
               targets="fildah-web"
@@ -149,7 +155,7 @@ jobs:
               targets="rxchat-web"
               ;;
             all)
-              targets="api fildah-web rxchat-web caddy"
+              targets="api auth-web fildah-web rxchat-web caddy"
               ;;
           esac
 
@@ -197,6 +203,7 @@ jobs:
           fi
 
           curl -fsS --max-time 20 https://api.fildah.com/health/ >/dev/null
+          curl -fsSI --max-time 20 https://auth.fildah.com >/dev/null
           curl -fsSI --max-time 20 https://www.fildah.com >/dev/null
           curl -fsSI --max-time 20 https://rxchat.fildah.com >/dev/null
           docker compose -f compose.yml ps
@@ -220,6 +227,7 @@ jobs:
           owner = "fildahs"
           service_packages = {
               "api": "fildah-api",
+              "auth-web": "auth-web",
               "fildah-web": "fildah-web",
               "rxchat-web": "rxchat-web",
           }
