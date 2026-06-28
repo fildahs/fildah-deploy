@@ -3,7 +3,8 @@
 }
 
 fildah.com, www.fildah.com {
-	redir https://rxchat.fildah.com{uri} 302
+	encode zstd gzip
+	reverse_proxy fildah-web:80
 }
 
 auth.fildah.com {
