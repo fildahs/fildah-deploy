@@ -51,10 +51,10 @@ services:
 
   worker:
     image: ${FILDAH_WORKER_IMAGE:-ghcr.io/fildahs/fildah-api-worker:main}
-    command: celery -A config worker --loglevel=info --concurrency=2
+    command: celery -A config worker --loglevel=info --concurrency=1
     restart: unless-stopped
-    mem_limit: 4g
-    cpus: "1.5"
+    mem_limit: 2.5g
+    cpus: "1"
     env_file:
       - ./.env
     environment:
