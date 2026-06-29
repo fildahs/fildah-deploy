@@ -137,7 +137,8 @@ jobs:
           case "$SERVICE" in
             api)
               set_image_var FILDAH_API_IMAGE "$IMAGE"
-              targets="api"
+              set_image_var FILDAH_WORKER_IMAGE "${IMAGE/fildah-api:/fildah-api-worker:}"
+              targets="api worker"
               ;;
             caddy)
               targets="caddy"
@@ -155,7 +156,7 @@ jobs:
               targets="rxchat-web"
               ;;
             all)
-              targets="api auth-web fildah-web rxchat-web caddy"
+              targets="api worker auth-web fildah-web rxchat-web caddy"
               ;;
           esac
 
@@ -227,6 +228,7 @@ jobs:
           owner = "fildahs"
           service_packages = {
               "api": "fildah-api",
+              "worker": "fildah-api-worker",
               "auth-web": "auth-web",
               "fildah-web": "fildah-web",
               "rxchat-web": "rxchat-web",
@@ -244,7 +246,12 @@ jobs:
               print("GHCR_CLEANUP_TOKEN is not set; skipping GHCR image cleanup.")
               raise SystemExit(0)
 
-          services = service_packages if service == "all" else {service: service_packages[service]}
+          if service == "all":
+              services = service_packages
+          elif service == "api":
+              services = {"api": "fildah-api", "worker": "fildah-api-worker"}
+          else:
+              services = {service: service_packages[service]}
 
           def github_request(method, url):
               request = urllib.request.Request(
