@@ -15,6 +15,7 @@ services:
       - api
       - auth-web
       - fildah-web
+      - healthscout-web
       - rxchat-web
 
   api:
@@ -40,6 +41,7 @@ services:
       MONNIFY_WEBHOOK_SECRET: ${MONNIFY_WEBHOOK_SECRET:-}
       MONNIFY_CARD_CHARGE_PATH: ${MONNIFY_CARD_CHARGE_PATH:-}
       MONNIFY_TIMEOUT_SECONDS: ${MONNIFY_TIMEOUT_SECONDS:-15}
+      HEALTHSCOUT_ORIGINS: ${HEALTHSCOUT_ORIGINS:-}
     volumes:
       - django_media:/app/media
     depends_on:
@@ -75,6 +77,7 @@ services:
       MONNIFY_WEBHOOK_SECRET: ${MONNIFY_WEBHOOK_SECRET:-}
       MONNIFY_CARD_CHARGE_PATH: ${MONNIFY_CARD_CHARGE_PATH:-}
       MONNIFY_TIMEOUT_SECONDS: ${MONNIFY_TIMEOUT_SECONDS:-15}
+      HEALTHSCOUT_ORIGINS: ${HEALTHSCOUT_ORIGINS:-}
     volumes:
       - django_media:/app/media
     depends_on:
@@ -90,6 +93,12 @@ services:
 
   fildah-web:
     image: ${FILDAH_WEB_IMAGE:-ghcr.io/fildahs/fildah-web:main}
+    restart: unless-stopped
+    expose:
+      - "80"
+
+  healthscout-web:
+    image: ${HEALTHSCOUT_WEB_IMAGE:-ghcr.io/fildahs/healthscout-web:main}
     restart: unless-stopped
     expose:
       - "80"
