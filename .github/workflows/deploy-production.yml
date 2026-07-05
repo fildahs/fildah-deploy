@@ -15,6 +15,7 @@ on:
           - auth-web
           - caddy
           - fildah-web
+          - healthscout-web
           - rxchat-web
           - all
       image_tag:
@@ -63,7 +64,7 @@ jobs:
         run: |
           set -eu
           case "$SERVICE" in
-            api|auth-web|caddy|fildah-web|rxchat-web|all) ;;
+            api|auth-web|caddy|fildah-web|healthscout-web|rxchat-web|all) ;;
             *) echo "Unknown service: $SERVICE" >&2; exit 1 ;;
           esac
           if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "caddy" ]; then
@@ -81,6 +82,7 @@ jobs:
             api) package="fildah-api" ;;
             auth-web) package="auth-web" ;;
             fildah-web) package="fildah-web" ;;
+            healthscout-web) package="healthscout-web" ;;
             rxchat-web) package="rxchat-web" ;;
           esac
           IMAGE="ghcr.io/fildahs/${package}:${IMAGE_TAG}"
@@ -151,12 +153,16 @@ jobs:
               set_image_var FILDAH_WEB_IMAGE "$IMAGE"
               targets="fildah-web"
               ;;
+            healthscout-web)
+              set_image_var HEALTHSCOUT_WEB_IMAGE "$IMAGE"
+              targets="healthscout-web"
+              ;;
             rxchat-web)
               set_image_var RXCHAT_WEB_IMAGE "$IMAGE"
               targets="rxchat-web"
               ;;
             all)
-              targets="api worker auth-web fildah-web rxchat-web caddy"
+              targets="api worker auth-web fildah-web healthscout-web rxchat-web caddy"
               ;;
           esac
 
@@ -206,6 +212,7 @@ jobs:
           curl -fsS --max-time 20 https://api.fildah.com/health/ >/dev/null
           curl -fsSI --max-time 20 https://auth.fildah.com >/dev/null
           curl -fsSI --max-time 20 https://www.fildah.com >/dev/null
+          curl -fsSI --max-time 20 https://healthscout.fildah.com >/dev/null
           curl -fsSI --max-time 20 https://rxchat.fildah.com >/dev/null
           docker compose -f compose.yml ps
           printf 'Deployed %s from %s at %s\n' "$SERVICE" "$SOURCE_REPO" "$COMMIT_SHA"
@@ -231,6 +238,7 @@ jobs:
               "worker": "fildah-api-worker",
               "auth-web": "auth-web",
               "fildah-web": "fildah-web",
+              "healthscout-web": "healthscout-web",
               "rxchat-web": "rxchat-web",
           }
           service = os.environ["SERVICE"]
