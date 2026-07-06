@@ -54,7 +54,6 @@ jobs:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       GHCR_CLEANUP_TOKEN: ${{ secrets.GHCR_CLEANUP_TOKEN }}
       SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-      KEEP_VPS_BACKUPS: ${{ vars.KEEP_VPS_BACKUPS || '10' }}
       KEEP_GHCR_IMAGES: ${{ vars.KEEP_GHCR_IMAGES || '10' }}
     steps:
       - name: Check out deploy config
@@ -114,7 +113,6 @@ jobs:
             IMAGE="${IMAGE:-}" \
             GHCR_READ_USER="$GHCR_READ_USER" \
             GHCR_READ_TOKEN="$GHCR_READ_TOKEN" \
-            KEEP_VPS_BACKUPS="$KEEP_VPS_BACKUPS" \
             SOURCE_REPO="$SOURCE_REPO" \
             COMMIT_SHA="$COMMIT_SHA" \
             'bash -se' <<'REMOTE'
@@ -172,15 +170,6 @@ jobs:
           chmod 700 "$backup_dir"
           cp compose.yml Caddyfile .env "$backup_dir"/
           docker compose -f compose.yml exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$backup_dir/postgres.sql.gz"
-          old_backups=$(find "$backup_root" -mindepth 1 -maxdepth 1 -type d -name 'deploy-*' -printf '%f\n' \
-            | sort -r \
-            | tail -n +$((KEEP_VPS_BACKUPS + 1)))
-          if [ -n "$old_backups" ]; then
-            printf '%s\n' "$old_backups" | while IFS= read -r old_backup; do
-              [ -n "$old_backup" ] || continue
-              rm -rf -- "$backup_root/$old_backup"
-            done
-          fi
 
           docker compose -f compose.yml config >/dev/null
           if [ "$SERVICE" = "caddy" ]; then
