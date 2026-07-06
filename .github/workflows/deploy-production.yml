@@ -12,8 +12,10 @@ on:
         type: choice
         options:
           - api
+          - auth-web
           - caddy
           - fildah-web
+          - healthscout-web
           - rxchat-web
           - all
       image_tag:
@@ -52,7 +54,6 @@ jobs:
       GHCR_READ_TOKEN: ${{ secrets.GHCR_READ_TOKEN }}
       GHCR_CLEANUP_TOKEN: ${{ secrets.GHCR_CLEANUP_TOKEN }}
       SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-      KEEP_VPS_BACKUPS: ${{ vars.KEEP_VPS_BACKUPS || '10' }}
       KEEP_GHCR_IMAGES: ${{ vars.KEEP_GHCR_IMAGES || '10' }}
     steps:
       - name: Check out deploy config
@@ -62,7 +63,7 @@ jobs:
         run: |
           set -eu
           case "$SERVICE" in
-            api|caddy|fildah-web|rxchat-web|all) ;;
+            api|auth-web|caddy|fildah-web|healthscout-web|rxchat-web|all) ;;
             *) echo "Unknown service: $SERVICE" >&2; exit 1 ;;
           esac
           if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "caddy" ]; then
@@ -78,7 +79,9 @@ jobs:
           fi
           case "$SERVICE" in
             api) package="fildah-api" ;;
+            auth-web) package="auth-web" ;;
             fildah-web) package="fildah-web" ;;
+            healthscout-web) package="healthscout-web" ;;
             rxchat-web) package="rxchat-web" ;;
           esac
           IMAGE="ghcr.io/fildahs/${package}:${IMAGE_TAG}"
@@ -110,7 +113,6 @@ jobs:
             IMAGE="${IMAGE:-}" \
             GHCR_READ_USER="$GHCR_READ_USER" \
             GHCR_READ_TOKEN="$GHCR_READ_TOKEN" \
-            KEEP_VPS_BACKUPS="$KEEP_VPS_BACKUPS" \
             SOURCE_REPO="$SOURCE_REPO" \
             COMMIT_SHA="$COMMIT_SHA" \
             'bash -se' <<'REMOTE'
@@ -135,21 +137,30 @@ jobs:
           case "$SERVICE" in
             api)
               set_image_var FILDAH_API_IMAGE "$IMAGE"
-              targets="api"
+              set_image_var FILDAH_WORKER_IMAGE "${IMAGE/fildah-api:/fildah-api-worker:}"
+              targets="api worker"
               ;;
             caddy)
               targets="caddy"
               ;;
+            auth-web)
+              set_image_var AUTH_WEB_IMAGE "$IMAGE"
+              targets="auth-web"
+              ;;
             fildah-web)
               set_image_var FILDAH_WEB_IMAGE "$IMAGE"
               targets="fildah-web"
+              ;;
+            healthscout-web)
+              set_image_var HEALTHSCOUT_WEB_IMAGE "$IMAGE"
+              targets="healthscout-web"
               ;;
             rxchat-web)
               set_image_var RXCHAT_WEB_IMAGE "$IMAGE"
               targets="rxchat-web"
               ;;
             all)
-              targets="api fildah-web rxchat-web caddy"
+              targets="api worker auth-web fildah-web healthscout-web rxchat-web caddy"
               ;;
           esac
 
@@ -159,15 +170,6 @@ jobs:
           chmod 700 "$backup_dir"
           cp compose.yml Caddyfile .env "$backup_dir"/
           docker compose -f compose.yml exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$backup_dir/postgres.sql.gz"
-          old_backups=$(find "$backup_root" -mindepth 1 -maxdepth 1 -type d -name 'deploy-*' -printf '%f\n' \
-            | sort -r \
-            | tail -n +$((KEEP_VPS_BACKUPS + 1)))
-          if [ -n "$old_backups" ]; then
-            printf '%s\n' "$old_backups" | while IFS= read -r old_backup; do
-              [ -n "$old_backup" ] || continue
-              rm -rf -- "$backup_root/$old_backup"
-            done
-          fi
 
           docker compose -f compose.yml config >/dev/null
           if [ "$SERVICE" = "caddy" ]; then
@@ -197,7 +199,9 @@ jobs:
           fi
 
           curl -fsS --max-time 20 https://api.fildah.com/health/ >/dev/null
+          curl -fsSI --max-time 20 https://auth.fildah.com >/dev/null
           curl -fsSI --max-time 20 https://www.fildah.com >/dev/null
+          curl -fsSI --max-time 20 https://healthscout.fildah.com >/dev/null
           curl -fsSI --max-time 20 https://rxchat.fildah.com >/dev/null
           docker compose -f compose.yml ps
           printf 'Deployed %s from %s at %s\n' "$SERVICE" "$SOURCE_REPO" "$COMMIT_SHA"
@@ -220,7 +224,10 @@ jobs:
           owner = "fildahs"
           service_packages = {
               "api": "fildah-api",
+              "worker": "fildah-api-worker",
+              "auth-web": "auth-web",
               "fildah-web": "fildah-web",
+              "healthscout-web": "healthscout-web",
               "rxchat-web": "rxchat-web",
           }
           service = os.environ["SERVICE"]
@@ -236,7 +243,12 @@ jobs:
               print("GHCR_CLEANUP_TOKEN is not set; skipping GHCR image cleanup.")
               raise SystemExit(0)
 
-          services = service_packages if service == "all" else {service: service_packages[service]}
+          if service == "all":
+              services = service_packages
+          elif service == "api":
+              services = {"api": "fildah-api", "worker": "fildah-api-worker"}
+          else:
+              services = {service: service_packages[service]}
 
           def github_request(method, url):
               request = urllib.request.Request(

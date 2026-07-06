@@ -1,6 +1,5 @@
 .env
 .env.example
-.env.sample
 compose.local.yml
 *.dump
 *.sql

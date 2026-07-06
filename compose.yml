@@ -13,7 +13,9 @@ services:
       - caddy_config:/config
     depends_on:
       - api
+      - auth-web
       - fildah-web
+      - healthscout-web
       - rxchat-web
 
   api:
@@ -26,16 +28,77 @@ services:
       DATABASE_SSL_REQUIRE: "False"
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      BILLING_MONTHLY_DISCOUNT: ${BILLING_MONTHLY_DISCOUNT:-0.13}
+      BILLING_YEARLY_DISCOUNT: ${BILLING_YEARLY_DISCOUNT:-0.17}
+      BILLING_RENEWAL_WINDOW_DAYS: ${BILLING_RENEWAL_WINDOW_DAYS:-3}
+      MONNIFY_BASE_URL: ${MONNIFY_BASE_URL:-https://sandbox.monnify.com}
+      MONNIFY_API_KEY: ${MONNIFY_API_KEY:-}
+      MONNIFY_SECRET_KEY: ${MONNIFY_SECRET_KEY:-}
+      MONNIFY_CONTRACT_CODE: ${MONNIFY_CONTRACT_CODE:-}
+      MONNIFY_WEBHOOK_SECRET: ${MONNIFY_WEBHOOK_SECRET:-}
+      MONNIFY_CARD_CHARGE_PATH: ${MONNIFY_CARD_CHARGE_PATH:-}
+      MONNIFY_TIMEOUT_SECONDS: ${MONNIFY_TIMEOUT_SECONDS:-15}
+      HEALTHSCOUT_ORIGINS: ${HEALTHSCOUT_ORIGINS:-}
     volumes:
       - django_media:/app/media
     depends_on:
       - postgres
       - qdrant
+      - redis
     expose:
       - "8000"
 
+  worker:
+    image: ${FILDAH_WORKER_IMAGE:-ghcr.io/fildahs/fildah-api-worker:main}
+    command: celery -A config worker --loglevel=info --concurrency=1
+    restart: unless-stopped
+    mem_limit: 2.5g
+    cpus: "1"
+    env_file:
+      - ./.env
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_SSL_REQUIRE: "False"
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ${QDRANT_API_KEY}
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      BILLING_MONTHLY_DISCOUNT: ${BILLING_MONTHLY_DISCOUNT:-0.13}
+      BILLING_YEARLY_DISCOUNT: ${BILLING_YEARLY_DISCOUNT:-0.17}
+      BILLING_RENEWAL_WINDOW_DAYS: ${BILLING_RENEWAL_WINDOW_DAYS:-3}
+      MONNIFY_BASE_URL: ${MONNIFY_BASE_URL:-https://sandbox.monnify.com}
+      MONNIFY_API_KEY: ${MONNIFY_API_KEY:-}
+      MONNIFY_SECRET_KEY: ${MONNIFY_SECRET_KEY:-}
+      MONNIFY_CONTRACT_CODE: ${MONNIFY_CONTRACT_CODE:-}
+      MONNIFY_WEBHOOK_SECRET: ${MONNIFY_WEBHOOK_SECRET:-}
+      MONNIFY_CARD_CHARGE_PATH: ${MONNIFY_CARD_CHARGE_PATH:-}
+      MONNIFY_TIMEOUT_SECONDS: ${MONNIFY_TIMEOUT_SECONDS:-15}
+      HEALTHSCOUT_ORIGINS: ${HEALTHSCOUT_ORIGINS:-}
+    volumes:
+      - django_media:/app/media
+    depends_on:
+      - postgres
+      - qdrant
+      - redis
+
+  auth-web:
+    image: ${AUTH_WEB_IMAGE:-ghcr.io/fildahs/auth-web:main}
+    restart: unless-stopped
+    expose:
+      - "80"
+
   fildah-web:
     image: ${FILDAH_WEB_IMAGE:-ghcr.io/fildahs/fildah-web:main}
+    restart: unless-stopped
+    expose:
+      - "80"
+
+  healthscout-web:
+    image: ${HEALTHSCOUT_WEB_IMAGE:-ghcr.io/fildahs/healthscout-web:main}
     restart: unless-stopped
     expose:
       - "80"
@@ -58,6 +121,14 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
 
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    expose:
+      - "6379"
+
   qdrant:
     image: qdrant/qdrant:v1.17.1
     restart: unless-stopped
@@ -65,10 +136,11 @@ services:
       QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
     volumes:
       - qdrant_data:/qdrant/storage
-    expose:
-      - "6333"
+    ports:
+      - "127.0.0.1:6333:6333"
 
 volumes:
+  redis_data:
   postgres_data:
   qdrant_data:
   django_media:
