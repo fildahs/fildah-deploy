@@ -136,8 +136,8 @@ services:
       QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY}
     volumes:
       - qdrant_data:/qdrant/storage
-    expose:
-      - "6333"
+    ports:
+      - "127.0.0.1:6333:6333"
 
 volumes:
   redis_data:

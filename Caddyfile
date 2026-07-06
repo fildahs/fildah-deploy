@@ -31,9 +31,3 @@ api.fildah.com {
 		header_up X-Forwarded-Host {host}
 	}
 }
-
-qdrant.fildah.com {
-	encode zstd gzip
-	redir / /dashboard/
-	reverse_proxy qdrant:6333
-}
