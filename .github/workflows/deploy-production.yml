@@ -90,25 +90,88 @@ jobs:
       - name: Configure SSH
         run: |
           set -eu
+          : "${VPS_HOST:?VPS_HOST is required}"
+          : "${VPS_USER:?VPS_USER is required}"
+          : "${SSH_KEY:?VPS_SSH_KEY is required}"
           mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_KEY" > ~/.ssh/fildah_vps
+          printf '%s\n' "$SSH_KEY" | tr -d '\r' > ~/.ssh/fildah_vps
           chmod 600 ~/.ssh/fildah_vps
-          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+          keyscan_ok=0
+          for attempt in 1 2 3; do
+            if ssh-keyscan -4 -T 20 -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/tmp/fildah-keyscan.err; then
+              keyscan_ok=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$keyscan_ok" != "1" ]; then
+            echo "Unable to scan the VPS SSH host key." >&2
+            cat /tmp/fildah-keyscan.err >&2
+            exit 1
+          fi
+          test -s ~/.ssh/known_hosts
+          ssh -4 -i ~/.ssh/fildah_vps \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=20 \
+            "$VPS_USER@$VPS_HOST" "true"
 
       - name: Sync deploy config to VPS
         run: |
           set -eu
+          ssh_opts="-4 -i ~/.ssh/fildah_vps -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
           rsync -az --delete \
             --exclude='.git/' \
-            --exclude='.github/' \
             --exclude='.env' \
-            -e "ssh -i ~/.ssh/fildah_vps" \
+            -e "ssh $ssh_opts" \
             ./ "$VPS_USER@$VPS_HOST:/srv/fildah/deploy/"
+
+      - name: Align VPS deploy checkout
+        run: |
+          set -eu
+          ssh_opts="-4 -i ~/.ssh/fildah_vps -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
+          ssh $ssh_opts "$VPS_USER@$VPS_HOST" \
+            DEPLOY_REPO_URL="https://github.com/fildahs/fildah-deploy.git" \
+            DEPLOY_SHA="$GITHUB_SHA" \
+            'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /srv/fildah/deploy
+
+          if [ ! -d .git ]; then
+            git init -q
+          fi
+
+          if git remote get-url origin >/dev/null 2>&1; then
+            git remote set-url origin "$DEPLOY_REPO_URL"
+          else
+            git remote add origin "$DEPLOY_REPO_URL"
+          fi
+
+          if ! git fetch --depth=1 origin "$DEPLOY_SHA"; then
+            git fetch --depth=1 origin main
+          fi
+          if ! git cat-file -e "$DEPLOY_SHA^{commit}"; then
+            echo "Workflow commit is not available in the VPS deploy checkout." >&2
+            exit 1
+          fi
+          git update-ref refs/heads/main "$DEPLOY_SHA"
+          git update-ref refs/remotes/origin/main "$DEPLOY_SHA"
+          git symbolic-ref HEAD refs/heads/main
+          git reset --mixed --quiet
+
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            echo "Tracked deploy files differ from GitHub after sync:" >&2
+            git status --short --untracked-files=no >&2
+            exit 1
+          fi
+          REMOTE
 
       - name: Deploy selected service
         run: |
           set -eu
-          ssh -i ~/.ssh/fildah_vps "$VPS_USER@$VPS_HOST" \
+          ssh_opts="-4 -i ~/.ssh/fildah_vps -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
+          ssh $ssh_opts "$VPS_USER@$VPS_HOST" \
             SERVICE="$SERVICE" \
             IMAGE="${IMAGE:-}" \
             GHCR_READ_USER="$GHCR_READ_USER" \
