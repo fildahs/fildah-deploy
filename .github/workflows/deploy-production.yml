@@ -244,6 +244,7 @@ jobs:
             docker compose -f compose.yml pull $targets
             docker compose -f compose.yml up -d --force-recreate $targets
             docker compose -f compose.yml up -d caddy
+            docker compose -f compose.yml restart caddy
           fi
 
           if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
@@ -267,6 +268,13 @@ jobs:
           curl -fsSI --max-time 20 https://www.fildah.com >/dev/null
           curl -fsSI --max-time 20 https://healthscout.fildah.com >/dev/null
           curl -fsSI --max-time 20 https://rxchat.fildah.com >/dev/null
+          if [ "$SERVICE" = "fildah-web" ] && [ -n "$COMMIT_SHA" ]; then
+            live_build="$(curl -fsS --max-time 20 https://www.fildah.com/build.txt | tr -d '\r\n')"
+            if [ "$live_build" != "$COMMIT_SHA" ]; then
+              printf 'www.fildah.com is serving build %.80s, expected %s\n' "$live_build" "$COMMIT_SHA" >&2
+              exit 1
+            fi
+          fi
           docker compose -f compose.yml ps
           printf 'Deployed %s from %s at %s\n' "$SERVICE" "$SOURCE_REPO" "$COMMIT_SHA"
           REMOTE
