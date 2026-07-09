@@ -137,6 +137,7 @@ jobs:
             'bash -se' <<'REMOTE'
           set -euo pipefail
           cd /srv/fildah/deploy
+          git config --global --add safe.directory /srv/fildah/deploy
 
           if [ ! -d .git ]; then
             git init -q
