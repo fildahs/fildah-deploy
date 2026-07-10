@@ -4,3 +4,4 @@ compose.local.yml
 *.sql
 qdrant-snapshots/
 command.md
+commands.md
