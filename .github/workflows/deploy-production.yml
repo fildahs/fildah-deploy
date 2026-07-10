@@ -1,6 +1,9 @@
 name: Deploy Production
 
 on:
+  push:
+    branches:
+      - main
   repository_dispatch:
     types:
       - deploy-service
@@ -44,7 +47,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     env:
-      SERVICE: ${{ github.event.client_payload.service || inputs.service }}
+      SERVICE: ${{ github.event.client_payload.service || inputs.service || 'caddy' }}
       IMAGE_TAG: ${{ github.event.client_payload.image_tag || inputs.image_tag }}
       SOURCE_REPO: ${{ github.event.client_payload.source_repo || inputs.source_repo }}
       COMMIT_SHA: ${{ github.event.client_payload.commit_sha || inputs.commit_sha }}
