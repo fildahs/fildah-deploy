@@ -198,33 +198,61 @@ jobs:
             fi
           }
 
+          worker_image=""
           case "$SERVICE" in
             api)
-              set_image_var FILDAH_API_IMAGE "$IMAGE"
-              set_image_var FILDAH_WORKER_IMAGE "${IMAGE/fildah-api:/fildah-api-worker:}"
+              worker_image="${IMAGE/fildah-api:/fildah-api-worker:}"
               targets="api worker"
               ;;
             caddy)
               targets="caddy"
               ;;
             auth-web)
-              set_image_var AUTH_WEB_IMAGE "$IMAGE"
               targets="auth-web"
               ;;
             fildah-web)
-              set_image_var FILDAH_WEB_IMAGE "$IMAGE"
               targets="fildah-web"
               ;;
             healthscout-web)
-              set_image_var HEALTHSCOUT_WEB_IMAGE "$IMAGE"
               targets="healthscout-web"
               ;;
             rxchat-web)
-              set_image_var RXCHAT_WEB_IMAGE "$IMAGE"
               targets="rxchat-web"
               ;;
             all)
               targets="api worker auth-web fildah-web healthscout-web rxchat-web caddy"
+              ;;
+          esac
+
+          if [ "$SERVICE" != "caddy" ]; then
+            : "${GHCR_READ_USER:?GHCR_READ_USER is required}"
+            : "${GHCR_READ_TOKEN:?GHCR_READ_TOKEN is required}"
+            echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u "$GHCR_READ_USER" --password-stdin
+          fi
+
+          if [ -n "$IMAGE" ]; then
+            docker pull "$IMAGE"
+            if [ -n "$worker_image" ]; then
+              docker pull "$worker_image"
+            fi
+          fi
+
+          case "$SERVICE" in
+            api)
+              set_image_var FILDAH_API_IMAGE "$IMAGE"
+              set_image_var FILDAH_WORKER_IMAGE "$worker_image"
+              ;;
+            auth-web)
+              set_image_var AUTH_WEB_IMAGE "$IMAGE"
+              ;;
+            fildah-web)
+              set_image_var FILDAH_WEB_IMAGE "$IMAGE"
+              ;;
+            healthscout-web)
+              set_image_var HEALTHSCOUT_WEB_IMAGE "$IMAGE"
+              ;;
+            rxchat-web)
+              set_image_var RXCHAT_WEB_IMAGE "$IMAGE"
               ;;
           esac
 
@@ -240,10 +268,10 @@ jobs:
             docker compose -f compose.yml up -d --force-recreate caddy
             docker compose -f compose.yml restart caddy
           else
-            echo "$GHCR_READ_TOKEN" | docker login ghcr.io -u "$GHCR_READ_USER" --password-stdin
             docker compose -f compose.yml pull $targets
             docker compose -f compose.yml up -d --force-recreate $targets
             docker compose -f compose.yml up -d caddy
+            docker compose -f compose.yml restart caddy
           fi
 
           if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
@@ -267,6 +295,25 @@ jobs:
           curl -fsSI --max-time 20 https://www.fildah.com >/dev/null
           curl -fsSI --max-time 20 https://healthscout.fildah.com >/dev/null
           curl -fsSI --max-time 20 https://rxchat.fildah.com >/dev/null
+
+          verify_frontend_build() {
+            service_name="$1"
+            build_url="$2"
+            display_host="$3"
+            if [ "$SERVICE" != "$service_name" ] || [ -z "$COMMIT_SHA" ]; then
+              return 0
+            fi
+            live_build="$(curl -fsS --max-time 20 "$build_url" | tr -d '\r\n')"
+            if [ "$live_build" != "$COMMIT_SHA" ]; then
+              printf '%s is serving build %.80s, expected %s\n' "$display_host" "$live_build" "$COMMIT_SHA" >&2
+              exit 1
+            fi
+          }
+
+          verify_frontend_build auth-web https://auth.fildah.com/build.txt auth.fildah.com
+          verify_frontend_build fildah-web https://www.fildah.com/build.txt www.fildah.com
+          verify_frontend_build healthscout-web https://healthscout.fildah.com/build.txt healthscout.fildah.com
+          verify_frontend_build rxchat-web https://rxchat.fildah.com/build.txt rxchat.fildah.com
           docker compose -f compose.yml ps
           printf 'Deployed %s from %s at %s\n' "$SERVICE" "$SOURCE_REPO" "$COMMIT_SHA"
           REMOTE
