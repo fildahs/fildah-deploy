@@ -231,9 +231,9 @@ jobs:
           fi
 
           if [ -n "$IMAGE" ]; then
-            docker pull "$IMAGE"
+            docker pull "$IMAGE" </dev/null
             if [ -n "$worker_image" ]; then
-              docker pull "$worker_image"
+              docker pull "$worker_image" </dev/null
             fi
           fi
 
@@ -261,21 +261,49 @@ jobs:
           mkdir -p "$backup_dir"
           chmod 700 "$backup_dir"
           cp compose.yml Caddyfile .env "$backup_dir"/
-          docker compose -f compose.yml exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' | gzip > "$backup_dir/postgres.sql.gz"
+          docker compose -f compose.yml exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' </dev/null | gzip > "$backup_dir/postgres.sql.gz"
 
           docker compose -f compose.yml config >/dev/null
           if [ "$SERVICE" = "caddy" ]; then
-            docker compose -f compose.yml up -d --force-recreate caddy
-            docker compose -f compose.yml restart caddy
+            docker compose -f compose.yml up -d --force-recreate caddy </dev/null
+            docker compose -f compose.yml restart caddy </dev/null
           else
-            docker compose -f compose.yml pull $targets
-            docker compose -f compose.yml up -d --force-recreate $targets
-            docker compose -f compose.yml up -d caddy
-            docker compose -f compose.yml restart caddy
+            docker compose -f compose.yml pull $targets </dev/null
+            docker compose -f compose.yml up -d --force-recreate $targets </dev/null
+            docker compose -f compose.yml up -d caddy </dev/null
+            docker compose -f compose.yml restart caddy </dev/null
           fi
 
+          verify_running_image() {
+            service_name="$1"
+            expected_image="$2"
+            if [ -z "$expected_image" ]; then
+              return 0
+            fi
+            container_id="$(docker compose -f compose.yml ps -q "$service_name")"
+            if [ -z "$container_id" ]; then
+              echo "$service_name has no running container after deploy" >&2
+              exit 1
+            fi
+            running_image="$(docker inspect --format '{{.Config.Image}}' "$container_id")"
+            if [ "$running_image" != "$expected_image" ]; then
+              printf '%s is running %s, expected %s\n' "$service_name" "$running_image" "$expected_image" >&2
+              exit 1
+            fi
+          }
+
+          case "$SERVICE" in
+            api)
+              verify_running_image api "$IMAGE"
+              verify_running_image worker "$worker_image"
+              ;;
+            auth-web|fildah-web|healthscout-web|rxchat-web)
+              verify_running_image "$SERVICE" "$IMAGE"
+              ;;
+          esac
+
           if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
-            docker compose -f compose.yml exec -T api python manage.py setup_qdrant
+            docker compose -f compose.yml exec -T api python manage.py setup_qdrant </dev/null
             docker compose -f compose.yml exec -T api python - <<'PY'
           import urllib.request
 
@@ -314,7 +342,7 @@ jobs:
           verify_frontend_build fildah-web https://www.fildah.com/build.txt www.fildah.com
           verify_frontend_build healthscout-web https://healthscout.fildah.com/build.txt healthscout.fildah.com
           verify_frontend_build rxchat-web https://rxchat.fildah.com/build.txt rxchat.fildah.com
-          docker compose -f compose.yml ps
+          docker compose -f compose.yml ps </dev/null
           printf 'Deployed %s from %s at %s\n' "$SERVICE" "$SOURCE_REPO" "$COMMIT_SHA"
           REMOTE
 
