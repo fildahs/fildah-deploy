@@ -322,11 +322,26 @@ jobs:
           PY
           fi
 
-          curl -fsS --max-time 20 https://api.fildah.com/health/ >/dev/null
-          curl -fsSI --max-time 20 https://auth.fildah.com >/dev/null
-          curl -fsSI --max-time 20 https://www.fildah.com >/dev/null
-          curl -fsSI --max-time 20 https://healthscout.fildah.com >/dev/null
-          curl -fsSI --max-time 20 https://rxchat.fildah.com >/dev/null
+          wait_for_url() {
+            method="$1"
+            url="$2"
+            for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+              if [ "$method" = "HEAD" ]; then
+                curl -fsSI --max-time 20 "$url" >/dev/null && return 0
+              else
+                curl -fsS --max-time 20 "$url" >/dev/null && return 0
+              fi
+              sleep 5
+            done
+            printf 'Timed out waiting for %s\n' "$url" >&2
+            exit 1
+          }
+
+          wait_for_url GET https://api.fildah.com/health/
+          wait_for_url HEAD https://auth.fildah.com
+          wait_for_url HEAD https://www.fildah.com
+          wait_for_url HEAD https://healthscout.fildah.com
+          wait_for_url HEAD https://rxchat.fildah.com
 
           verify_frontend_build() {
             service_name="$1"
