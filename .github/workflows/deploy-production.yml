@@ -122,6 +122,7 @@ jobs:
           set -eu
           ssh_opts="-4 -i ~/.ssh/fildah_vps -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
           rsync -az --delete \
+            --filter=':- .gitignore' \
             --exclude='.git/' \
             --exclude='.env' \
             -e "ssh $ssh_opts" \
