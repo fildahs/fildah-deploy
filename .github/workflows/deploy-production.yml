@@ -206,7 +206,7 @@ jobs:
           case "$SERVICE" in
             api)
               worker_image="${IMAGE/fildah-api:/fildah-api-worker:}"
-              targets="api worker"
+              targets="api worker billing-beat"
               ;;
             caddy)
               targets="caddy"
@@ -224,7 +224,7 @@ jobs:
               targets="rxchat-web"
               ;;
             all)
-              targets="api worker auth-web fildah-web healthscout-web rxchat-web caddy"
+              targets="api worker billing-beat auth-web fildah-web healthscout-web rxchat-web caddy"
               ;;
           esac
 
@@ -268,6 +268,10 @@ jobs:
           docker compose -f compose.yml exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' </dev/null | gzip > "$backup_dir/postgres.sql.gz"
 
           docker compose -f compose.yml config >/dev/null
+          if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
+            docker compose -f compose.yml run --rm --no-deps api \
+              python manage.py migrate --noinput </dev/null
+          fi
           if [ "$SERVICE" = "caddy" ]; then
             docker compose -f compose.yml up -d --force-recreate caddy </dev/null
             docker compose -f compose.yml restart caddy </dev/null
@@ -300,6 +304,7 @@ jobs:
             api)
               verify_running_image api "$IMAGE"
               verify_running_image worker "$worker_image"
+              verify_running_image billing-beat "$worker_image"
               ;;
             auth-web|fildah-web|healthscout-web|rxchat-web)
               verify_running_image "$SERVICE" "$IMAGE"
@@ -307,6 +312,7 @@ jobs:
           esac
 
           if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
+            docker compose -f compose.yml exec -T api python manage.py migrate --check </dev/null
             docker compose -f compose.yml exec -T api python manage.py setup_qdrant </dev/null
             docker compose -f compose.yml exec -T api python - <<'PY'
           import urllib.request
