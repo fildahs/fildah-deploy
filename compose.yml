@@ -3,7 +3,7 @@ services:
     image: caddy:2.8-alpine
     restart: unless-stopped
     environment:
-      CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL}
+      CADDY_ACME_EMAIL: ${CADDY_ACME_EMAIL:-admin@fildah.com}
     ports:
       - "80:80"
       - "443:443"
@@ -24,10 +24,18 @@ services:
     env_file:
       - ./.env
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DEBUG: ${DEBUG:-False}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-api.fildah.com}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://auth.fildah.com,https://www.fildah.com,https://healthscout.fildah.com,https://rxchat.fildah.com}
+      AUTH_ORIGINS: ${AUTH_ORIGINS:-https://auth.fildah.com}
+      FILDAH_ORIGINS: ${FILDAH_ORIGINS:-https://www.fildah.com}
+      HEALTHSCOUT_ORIGINS: ${HEALTHSCOUT_ORIGINS:-https://healthscout.fildah.com}
+      RXCHAT_ORIGINS: ${RXCHAT_ORIGINS:-https://rxchat.fildah.com}
+      DATABASE_URL: postgres://${POSTGRES_USER:-fildah}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fildah}
       DATABASE_SSL_REQUIRE: "False"
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-RxChat}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
@@ -53,7 +61,6 @@ services:
       OPAY_COUNTRY: ${OPAY_COUNTRY:-NG}
       OPAY_TRANSFER_ACCOUNT_NAME: ${OPAY_TRANSFER_ACCOUNT_NAME:-Fildah}
       OPAY_TIMEOUT_SECONDS: ${OPAY_TIMEOUT_SECONDS:-15}
-      HEALTHSCOUT_ORIGINS: ${HEALTHSCOUT_ORIGINS:-}
       GUNICORN_WORKERS: ${GUNICORN_WORKERS:-5}
       GUNICORN_THREADS: ${GUNICORN_THREADS:-12}
       GUNICORN_TIMEOUT: ${GUNICORN_TIMEOUT:-180}
@@ -76,10 +83,13 @@ services:
     env_file:
       - ./.env
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DEBUG: ${DEBUG:-False}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-api.fildah.com}
+      DATABASE_URL: postgres://${POSTGRES_USER:-fildah}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fildah}
       DATABASE_SSL_REQUIRE: "False"
       QDRANT_URL: http://qdrant:6333
       QDRANT_API_KEY: ${QDRANT_API_KEY}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-RxChat}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
@@ -155,8 +165,8 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_DB: ${POSTGRES_DB:-fildah}
+      POSTGRES_USER: ${POSTGRES_USER:-fildah}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
