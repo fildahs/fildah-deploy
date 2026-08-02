@@ -101,7 +101,7 @@ jobs:
           chmod 600 ~/.ssh/fildah_vps
           keyscan_ok=0
           for attempt in 1 2 3; do
-            if ssh-keyscan -4 -T 20 -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/tmp/fildah-keyscan.err; then
+            if ssh-keyscan -4 -T 20 -t ed25519 -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/tmp/fildah-keyscan.err; then
               keyscan_ok=1
               break
             fi
