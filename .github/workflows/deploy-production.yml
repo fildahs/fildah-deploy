@@ -265,7 +265,9 @@ jobs:
           mkdir -p "$backup_dir"
           chmod 700 "$backup_dir"
           cp compose.yml Caddyfile .env "$backup_dir"/
-          docker compose -f compose.yml exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB"' </dev/null | gzip > "$backup_dir/postgres.sql.gz"
+          docker compose -f compose.yml exec -T postgres sh -c \
+            'pg_dump -U "${POSTGRES_USER:-fildah}" "${POSTGRES_DB:-fildah}"' \
+            </dev/null | gzip > "$backup_dir/postgres.sql.gz"
 
           docker compose -f compose.yml config >/dev/null
           if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
