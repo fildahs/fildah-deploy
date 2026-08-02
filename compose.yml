@@ -91,6 +91,15 @@ services:
       - qdrant
       - redis
 
+  attachment-worker:
+    extends:
+      service: worker
+    command: >-
+      celery -A config worker --loglevel=info --queues=attachments
+      --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=50
+    mem_limit: 2.5g
+    cpus: "2"
+
   billing-beat:
     extends:
       service: worker
