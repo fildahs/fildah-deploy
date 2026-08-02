@@ -206,7 +206,7 @@ jobs:
           case "$SERVICE" in
             api)
               worker_image="${IMAGE/fildah-api:/fildah-api-worker:}"
-              targets="api worker billing-beat"
+              targets="api worker attachment-worker billing-beat"
               ;;
             caddy)
               targets="caddy"
@@ -224,7 +224,7 @@ jobs:
               targets="rxchat-web"
               ;;
             all)
-              targets="api worker billing-beat auth-web fildah-web healthscout-web rxchat-web caddy"
+              targets="api worker attachment-worker billing-beat auth-web fildah-web healthscout-web rxchat-web caddy"
               ;;
           esac
 
@@ -304,6 +304,7 @@ jobs:
             api)
               verify_running_image api "$IMAGE"
               verify_running_image worker "$worker_image"
+              verify_running_image attachment-worker "$worker_image"
               verify_running_image billing-beat "$worker_image"
               ;;
             auth-web|fildah-web|healthscout-web|rxchat-web)
