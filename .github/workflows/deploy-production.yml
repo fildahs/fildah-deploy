@@ -285,13 +285,13 @@ jobs:
           verify_running_image() {
             service_name="$1"
             expected_image="$2"
-            if [ -z "$expected_image" ]; then
-              return 0
-            fi
             container_id="$(docker compose -f compose.yml ps -q "$service_name")"
             if [ -z "$container_id" ]; then
               echo "$service_name has no running container after deploy" >&2
               exit 1
+            fi
+            if [ -z "$expected_image" ]; then
+              return 0
             fi
             running_image="$(docker inspect --format '{{.Config.Image}}' "$container_id")"
             if [ "$running_image" != "$expected_image" ]; then
@@ -306,6 +306,11 @@ jobs:
               verify_running_image worker "$worker_image"
               verify_running_image attachment-worker "$worker_image"
               verify_running_image billing-beat "$worker_image"
+              ;;
+            all)
+              for service_name in api worker attachment-worker billing-beat auth-web fildah-web healthscout-web rxchat-web caddy; do
+                verify_running_image "$service_name" ""
+              done
               ;;
             auth-web|fildah-web|healthscout-web|rxchat-web)
               verify_running_image "$SERVICE" "$IMAGE"
