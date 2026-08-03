@@ -41,9 +41,17 @@ services:
     restart: unless-stopped
     environment:
       <<: *api-secrets
+      DEBUG: "False"
+      ALLOWED_HOSTS: api.fildah.com
+      ALLOWED_ORIGINS: https://auth.fildah.com,https://www.fildah.com,https://healthscout.fildah.com,https://rxchat.fildah.com
+      AUTH_ORIGINS: https://auth.fildah.com
+      FILDAH_ORIGINS: https://www.fildah.com
+      HEALTHSCOUT_ORIGINS: https://healthscout.fildah.com
+      RXCHAT_ORIGINS: https://rxchat.fildah.com
       DATABASE_URL: postgres://${POSTGRES_USER:-fildah}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fildah}
       DATABASE_SSL_REQUIRE: "False"
       QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: RxChat
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
@@ -71,9 +79,12 @@ services:
     cpus: "1"
     environment:
       <<: *api-secrets
+      DEBUG: "False"
+      ALLOWED_HOSTS: api.fildah.com
       DATABASE_URL: postgres://${POSTGRES_USER:-fildah}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fildah}
       DATABASE_SSL_REQUIRE: "False"
       QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: RxChat
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
