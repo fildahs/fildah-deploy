@@ -102,13 +102,16 @@ services:
       - qdrant
       - redis
 
+  # Photos and scanned PDFs (rx-56): no OCR models. A child measured 104 MB
+  # idle and 262 MB at most while making a 12 MP photo small; most of a read
+  # is waiting on DeepSeek, so four run at once.
   attachment-worker:
     extends:
       service: worker
     command: >-
       celery -A config worker --loglevel=info --queues=attachments
-      --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=50
-    mem_limit: 2.5g
+      --concurrency=4 --prefetch-multiplier=1 --max-tasks-per-child=50
+    mem_limit: 1.5g
     cpus: "2"
 
   billing-beat:
