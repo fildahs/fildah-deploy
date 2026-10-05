@@ -241,6 +241,31 @@ jobs:
             fi
           fi
 
+          if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
+            # The monthly-only migration changes weekly customer state and
+            # cannot cancel an existing subscription at the payment provider.
+            # Resolve these records explicitly before taking the site down.
+            weekly_counts="$(docker compose -f compose.yml exec -T postgres sh -c \
+              'psql -X -U "${POSTGRES_USER:-fildah}" -d "${POSTGRES_DB:-fildah}" -At -v ON_ERROR_STOP=1' <<'SQL'
+          SELECT
+            (SELECT count(*) FROM billing_subscription
+              WHERE billing_cycle='weekly' OR pending_billing_cycle='weekly'),
+            (SELECT count(*) FROM billing_paymenttransaction
+              WHERE billing_cycle='weekly' AND status='pending'),
+            (SELECT count(*) FROM billing_providersubscription s
+              JOIN billing_providerplan p ON p.id=s.provider_plan_id
+              WHERE p.billing_cycle='weekly' AND s.status NOT IN ('completed','cancelled'));
+          SQL
+            )"
+            IFS='|' read -r weekly_subs weekly_payments weekly_provider_subs <<< "$weekly_counts"
+            printf 'Weekly preflight: subscriptions=%s pending_payments=%s live_provider_subscriptions=%s\n' \
+              "$weekly_subs" "$weekly_payments" "$weekly_provider_subs"
+            if [ "$weekly_subs" -ne 0 ] || [ "$weekly_payments" -ne 0 ] || [ "$weekly_provider_subs" -ne 0 ]; then
+              echo "Resolve weekly customer records before the monthly-only migration." >&2
+              exit 1
+            fi
+          fi
+
           backup_root="/srv/fildah/backups"
           backup_dir="$backup_root/deploy-$(date -u +%Y%m%dT%H%M%SZ)"
           mkdir -p "$backup_dir"
