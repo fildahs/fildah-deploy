@@ -14,6 +14,7 @@ on:
         required: true
         type: choice
         options:
+          - preflight
           - api
           - auth-web
           - caddy
@@ -58,6 +59,7 @@ jobs:
       GHCR_CLEANUP_TOKEN: ${{ secrets.GHCR_CLEANUP_TOKEN }}
       SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       KEEP_GHCR_IMAGES: ${{ vars.KEEP_GHCR_IMAGES || '10' }}
+      BACKUP_ID: deploy-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Check out deploy config
         uses: actions/checkout@v4
@@ -66,10 +68,10 @@ jobs:
         run: |
           set -eu
           case "$SERVICE" in
-            api|auth-web|caddy|fildah-web|healthscout-web|rxchat-web|all) ;;
+            preflight|api|auth-web|caddy|fildah-web|healthscout-web|rxchat-web|all) ;;
             *) echo "Unknown service: $SERVICE" >&2; exit 1 ;;
           esac
-          if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "caddy" ]; then
+          if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "caddy" ] || [ "$SERVICE" = "preflight" ]; then
             if [ -n "$IMAGE_TAG" ]; then
               echo "image_tag is only supported for app image deployments" >&2
               exit 1
@@ -120,10 +122,126 @@ jobs:
             -o ConnectTimeout=20 \
             "$VPS_USER@$VPS_HOST" "true"
 
-      - name: Sync deploy config to VPS
+      - name: Read-only production preflight
+        if: env.SERVICE == 'preflight'
         run: |
           set -eu
           ssh_opts="-4 -i ~/.ssh/fildah_vps -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
+          ssh $ssh_opts "$VPS_USER@$VPS_HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /srv/fildah/deploy
+          docker compose -f compose.yml config >/dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+
+          present = False
+          for line in Path('.env').read_text().splitlines():
+              if line.startswith('BILLING_TRIAL_KEY='):
+                  value = line.partition('=')[2].strip()
+                  quote = None
+                  for index, char in enumerate(value):
+                      if quote is not None:
+                          if char == quote:
+                              quote = None
+                      elif char in ('"', "'"):
+                          quote = char
+                      elif char == '#' and (index == 0 or value[index - 1].isspace()):
+                          value = value[:index].rstrip()
+                          break
+                  if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
+                      value = value[1:-1]
+                  present = bool(value.strip())
+                  break
+          print(f"BILLING_TRIAL_KEY in host environment: {'present' if present else 'missing'}")
+          if not present:
+              raise SystemExit('Trial key must be prepared before cutover.')
+          PY
+          df -Pk /srv/fildah
+          for service_name in api worker attachment-worker billing-beat; do
+            container_id="$(docker compose -f compose.yml ps -q "$service_name")"
+            test -n "$container_id"
+            printf '%s ' "$service_name"
+            docker inspect --format '{{.Config.Image}} {{.Image}}' "$container_id"
+          done
+          docker compose -f compose.yml exec -T postgres sh -c \
+            'psql -X -U "${POSTGRES_USER:-fildah}" -d "${POSTGRES_DB:-fildah}" -At -v ON_ERROR_STOP=1' <<'SQL'
+          SELECT 'database_bytes', pg_database_size(current_database());
+          SELECT 'applied_migration', app, max(name) FROM django_migrations
+            WHERE app IN ('billing','care','chat','rxchat','identity') GROUP BY app ORDER BY app;
+          SELECT 'provider_plans', provider, billing_cycle, count(*),
+            count(*) FILTER (WHERE is_active) FROM billing_providerplan
+            GROUP BY provider, billing_cycle ORDER BY provider, billing_cycle;
+          SQL
+          weekly_counts="$(docker compose -f compose.yml exec -T postgres sh -c \
+            'psql -X -U "${POSTGRES_USER:-fildah}" -d "${POSTGRES_DB:-fildah}" -At -v ON_ERROR_STOP=1' <<'SQL'
+          SELECT
+            (SELECT count(*) FROM billing_subscription
+              WHERE billing_cycle='weekly' OR pending_billing_cycle='weekly'),
+            (SELECT count(*) FROM billing_paymenttransaction
+              WHERE billing_cycle='weekly' AND status='pending'),
+            (SELECT count(*) FROM billing_providersubscription s
+              JOIN billing_providerplan p ON p.id=s.provider_plan_id
+              WHERE p.billing_cycle='weekly' AND s.status NOT IN ('completed','cancelled'));
+          SQL
+          )"
+          IFS='|' read -r weekly_subs weekly_payments weekly_provider_subs <<< "$weekly_counts"
+          for count in "$weekly_subs" "$weekly_payments" "$weekly_provider_subs"; do
+            [[ "$count" =~ ^[0-9]+$ ]]
+          done
+          printf 'Weekly customer rows: subscriptions=%s pending_payments=%s live_provider_subscriptions=%s\n' \
+            "$weekly_subs" "$weekly_payments" "$weekly_provider_subs"
+          docker compose -f compose.yml exec -T api python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          required = (
+              "SECRET_KEY", "QDRANT_API_KEY",
+              "PAYSTACK_SECRET_KEY", "PAYSTACK_PUBLIC_KEY", "BREVO_API_KEY",
+          )
+          optional = ("OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY")
+          missing = []
+          for name in (*required, *optional):
+              present = bool(os.environ.get(name, "").strip())
+              print(f"{name}: {'present' if present else 'missing'}")
+              if name in required and not present:
+                  missing.append(name)
+          if missing:
+              raise SystemExit("Required credential presence check failed.")
+
+          collection = urllib.parse.quote(os.environ.get("QDRANT_COLLECTION", "RxChat"), safe="")
+          request = urllib.request.Request(
+              os.environ["QDRANT_URL"].rstrip("/") + "/collections/" + collection,
+              headers={"api-key": os.environ["QDRANT_API_KEY"]},
+          )
+          with urllib.request.urlopen(request, timeout=10) as response:
+              result = json.load(response)["result"]
+          print(f"Qdrant collection: status={result.get('status')} points={result.get('points_count')}")
+          PY
+          if [ "$weekly_subs" -ne 0 ] || [ "$weekly_payments" -ne 0 ] || [ "$weekly_provider_subs" -ne 0 ]; then
+            echo "Weekly customer rows require reconciliation before cutover." >&2
+            exit 1
+          fi
+          REMOTE
+
+      - name: Sync deploy config to VPS
+        if: env.SERVICE != 'preflight'
+        run: |
+          set -eu
+          ssh_opts="-4 -i ~/.ssh/fildah_vps -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
+          ssh $ssh_opts "$VPS_USER@$VPS_HOST" BACKUP_ID="$BACKUP_ID" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /srv/fildah/deploy
+          backup_dir="/srv/fildah/backups/$BACKUP_ID"
+          mkdir -p "$backup_dir"
+          chmod 700 "$backup_dir"
+          for file in compose.yml Caddyfile .env; do
+            test -f "$file"
+            cp -p "$file" "$backup_dir/$file"
+          done
+          git rev-parse HEAD > "$backup_dir/previous-deploy-commit" 2>/dev/null || true
+          REMOTE
           rsync -az --delete \
             --filter=':- .gitignore' \
             --exclude='.git/' \
@@ -132,6 +250,7 @@ jobs:
             ./ "$VPS_USER@$VPS_HOST:/srv/fildah/deploy/"
 
       - name: Align VPS deploy checkout
+        if: env.SERVICE != 'preflight'
         run: |
           set -eu
           ssh_opts="-4 -i ~/.ssh/fildah_vps -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
@@ -173,6 +292,7 @@ jobs:
           REMOTE
 
       - name: Deploy selected service
+        if: env.SERVICE != 'preflight'
         run: |
           set -eu
           ssh_opts="-4 -i ~/.ssh/fildah_vps -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
@@ -183,6 +303,7 @@ jobs:
             GHCR_READ_TOKEN="$GHCR_READ_TOKEN" \
             SOURCE_REPO="$SOURCE_REPO" \
             COMMIT_SHA="$COMMIT_SHA" \
+            BACKUP_ID="$BACKUP_ID" \
             'bash -se' <<'REMOTE'
           set -euo pipefail
           cd /srv/fildah/deploy
@@ -224,7 +345,7 @@ jobs:
               targets="rxchat-web"
               ;;
             all)
-              targets="api worker attachment-worker billing-beat auth-web fildah-web healthscout-web rxchat-web caddy"
+              targets="api worker attachment-worker billing-beat auth-web fildah-web healthscout-web rxchat-web"
               ;;
           esac
 
@@ -240,6 +361,185 @@ jobs:
               docker pull "$worker_image" </dev/null
             fi
           fi
+
+          check_weekly_state() {
+            # The monthly-only migration changes weekly customer state and
+            # cannot cancel an existing subscription at the payment provider.
+            weekly_counts="$(docker compose -f compose.yml exec -T postgres sh -c \
+              'psql -X -U "${POSTGRES_USER:-fildah}" -d "${POSTGRES_DB:-fildah}" -At -v ON_ERROR_STOP=1' <<'SQL'
+          SELECT
+            (SELECT count(*) FROM billing_subscription
+              WHERE billing_cycle='weekly' OR pending_billing_cycle='weekly'),
+            (SELECT count(*) FROM billing_paymenttransaction
+              WHERE billing_cycle='weekly' AND status='pending'),
+            (SELECT count(*) FROM billing_providersubscription s
+              JOIN billing_providerplan p ON p.id=s.provider_plan_id
+              WHERE p.billing_cycle='weekly' AND s.status NOT IN ('completed','cancelled'));
+          SQL
+            )" || return 1
+            IFS='|' read -r weekly_subs weekly_payments weekly_provider_subs <<< "$weekly_counts" || return 1
+            for count in "$weekly_subs" "$weekly_payments" "$weekly_provider_subs"; do
+              [[ "$count" =~ ^[0-9]+$ ]] || return 1
+            done
+            printf 'Weekly preflight: subscriptions=%s pending_payments=%s live_provider_subscriptions=%s\n' \
+              "$weekly_subs" "$weekly_payments" "$weekly_provider_subs"
+            if [ "$weekly_subs" -ne 0 ] || [ "$weekly_payments" -ne 0 ] || [ "$weekly_provider_subs" -ne 0 ]; then
+              echo "Resolve weekly customer records before the monthly-only migration." >&2
+              return 1
+            fi
+          }
+
+          if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
+            # Fast check before downtime; a second check below closes the race
+            # with requests that were in flight while these services stopped.
+            check_weekly_state || exit 1
+          fi
+
+          backup_root="/srv/fildah/backups"
+          backup_dir="$backup_root/$BACKUP_ID"
+          test -f "$backup_dir/.env"
+          test -f "$backup_dir/compose.yml"
+          test -f "$backup_dir/Caddyfile"
+          docker compose -f compose.yml config >/dev/null
+
+          if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
+            # A previous pin may be the mutable :main tag. Keep the exact
+            # images currently running on this VPS under unique local tags.
+            preserve_running_image() {
+              service_name="$1"
+              package="$2"
+              container_id="$(docker compose -f compose.yml ps -q "$service_name")"
+              test -n "$container_id"
+              image_id="$(docker inspect --format '{{.Image}}' "$container_id")"
+              docker image inspect "$image_id" >/dev/null
+              rollback_tag="ghcr.io/fildahs/${package}:rollback-${BACKUP_ID}"
+              docker tag "$image_id" "$rollback_tag"
+              printf '%s=%s\n' "$service_name" "$rollback_tag" >> "$backup_dir/rollback-images"
+            }
+            preserve_running_image api fildah-api
+            preserve_running_image worker fildah-api-worker
+            worker_container_id="$(docker compose -f compose.yml ps -q worker)"
+            worker_image_id="$(docker inspect --format '{{.Image}}' "$worker_container_id")"
+            for service_name in attachment-worker billing-beat; do
+              container_id="$(docker compose -f compose.yml ps -q "$service_name")"
+              test -n "$container_id"
+              running_image_id="$(docker inspect --format '{{.Image}}' "$container_id")"
+              if [ "$running_image_id" != "$worker_image_id" ]; then
+                echo "$service_name does not run the worker rollback image; reconcile before cutover." >&2
+                exit 1
+              fi
+            done
+            restart_old_stack() {
+              docker compose -f compose.yml up -d \
+                api worker attachment-worker billing-beat caddy </dev/null
+            }
+            # Stop new requests and scheduled jobs before stopping the API;
+            # leave workers running until API requests can no longer enqueue.
+            # All old writers must stop before backup and migration.
+            if ! docker compose -f compose.yml stop --timeout 180 caddy billing-beat </dev/null; then
+              restart_old_stack
+              exit 1
+            fi
+            if ! docker compose -f compose.yml stop --timeout 180 api </dev/null; then
+              restart_old_stack
+              exit 1
+            fi
+
+            if ! worker_host="$(docker inspect --format '{{.Config.Hostname}}' "$worker_container_id")"; then
+              restart_old_stack
+              exit 1
+            fi
+            if ! attachment_container_id="$(docker compose -f compose.yml ps -q attachment-worker)" \
+              || [ -z "$attachment_container_id" ]; then
+              restart_old_stack
+              exit 1
+            fi
+            if ! attachment_host="$(docker inspect --format '{{.Config.Hostname}}' "$attachment_container_id")"; then
+              restart_old_stack
+              exit 1
+            fi
+            drain_ok=0
+            clear_checks=0
+            for attempt in $(seq 1 18); do
+              if docker compose -f compose.yml exec -T worker \
+                python - "celery@$worker_host" "celery@$attachment_host" <<'PY'
+          import os
+          import sys
+
+          import redis
+
+          from config.celery import app
+
+          expected = set(sys.argv[1:])
+          broker = redis.Redis.from_url(os.environ["CELERY_BROKER_URL"])
+          queued = {name: broker.llen(name) for name in ("celery", "attachments")}
+          unacked = broker.hlen("unacked")
+          inspect = app.control.inspect(destination=sorted(expected), timeout=5)
+          replies = {
+              "ping": inspect.ping() or {},
+              "active": inspect.active() or {},
+              "reserved": inspect.reserved() or {},
+              "scheduled": inspect.scheduled() or {},
+          }
+          if any(not expected.issubset(reply) for reply in replies.values()):
+              print("Celery drain: a worker did not answer; keeping the old release.")
+              raise SystemExit(1)
+          running = {
+              state: sum(len(replies[state][node]) for node in expected)
+              for state in ("active", "reserved", "scheduled")
+          }
+          print(f"Celery drain: queues={queued}, unacked={unacked}, workers={running}")
+          if any(queued.values()) or unacked or any(running.values()):
+              raise SystemExit(1)
+          PY
+              then
+                clear_checks=$((clear_checks + 1))
+                if [ "$clear_checks" -ge 2 ]; then
+                  drain_ok=1
+                  break
+                fi
+              else
+                clear_checks=0
+              fi
+              sleep 10
+            done
+            if [ "$drain_ok" != "1" ]; then
+              echo "Celery did not drain after API stop; restarting the old stack." >&2
+              restart_old_stack
+              exit 1
+            fi
+            if ! docker compose -f compose.yml stop --timeout 180 worker attachment-worker </dev/null; then
+              restart_old_stack
+              exit 1
+            fi
+            verify_empty_queues() {
+              local celery_queued attachment_queued unacked count
+              celery_queued="$(docker compose -f compose.yml exec -T redis redis-cli --raw LLEN celery)" || return 1
+              attachment_queued="$(docker compose -f compose.yml exec -T redis redis-cli --raw LLEN attachments)" || return 1
+              unacked="$(docker compose -f compose.yml exec -T redis redis-cli --raw HLEN unacked)" || return 1
+              for count in "$celery_queued" "$attachment_queued" "$unacked"; do
+                [[ "$count" =~ ^[0-9]+$ ]] || return 1
+              done
+              printf 'Post-stop Celery: default=%s attachments=%s unacked=%s\n' \
+                "$celery_queued" "$attachment_queued" "$unacked"
+              [ "$celery_queued" -eq 0 ] && [ "$attachment_queued" -eq 0 ] && [ "$unacked" -eq 0 ]
+            }
+            if ! verify_empty_queues; then
+              echo "Celery queue check failed after worker stop; restarting the old release." >&2
+              restart_old_stack
+              exit 1
+            fi
+            if ! check_weekly_state; then
+              echo "Weekly state changed during quiescence; restarting the old image without migrating." >&2
+              restart_old_stack
+              exit 1
+            fi
+          fi
+          docker compose -f compose.yml exec -T postgres sh -c \
+            'pg_dump -U "${POSTGRES_USER:-fildah}" "${POSTGRES_DB:-fildah}"' \
+            </dev/null | gzip > "$backup_dir/postgres.sql.gz"
+          gzip -t "$backup_dir/postgres.sql.gz"
+          echo "Pre-deployment backup: $backup_dir"
 
           case "$SERVICE" in
             api)
@@ -260,16 +560,6 @@ jobs:
               ;;
           esac
 
-          backup_root="/srv/fildah/backups"
-          backup_dir="$backup_root/deploy-$(date -u +%Y%m%dT%H%M%SZ)"
-          mkdir -p "$backup_dir"
-          chmod 700 "$backup_dir"
-          cp compose.yml Caddyfile .env "$backup_dir"/
-          docker compose -f compose.yml exec -T postgres sh -c \
-            'pg_dump -U "${POSTGRES_USER:-fildah}" "${POSTGRES_DB:-fildah}"' \
-            </dev/null | gzip > "$backup_dir/postgres.sql.gz"
-
-          docker compose -f compose.yml config >/dev/null
           if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
             docker compose -f compose.yml run --rm --no-deps api \
               python manage.py migrate --noinput </dev/null
@@ -280,8 +570,10 @@ jobs:
           else
             docker compose -f compose.yml pull $targets </dev/null
             docker compose -f compose.yml up -d --force-recreate $targets </dev/null
-            docker compose -f compose.yml up -d caddy </dev/null
-            docker compose -f compose.yml restart caddy </dev/null
+            if [ "$SERVICE" != "api" ] && [ "$SERVICE" != "all" ]; then
+              docker compose -f compose.yml up -d caddy </dev/null
+              docker compose -f compose.yml restart caddy </dev/null
+            fi
           fi
 
           verify_running_image() {
@@ -310,7 +602,7 @@ jobs:
               verify_running_image billing-beat "$worker_image"
               ;;
             all)
-              for service_name in api worker attachment-worker billing-beat auth-web fildah-web healthscout-web rxchat-web caddy; do
+              for service_name in api worker attachment-worker billing-beat auth-web fildah-web healthscout-web rxchat-web; do
                 verify_running_image "$service_name" ""
               done
               ;;
@@ -334,6 +626,10 @@ jobs:
               if response.status != 200 or "ok" not in body:
                   raise SystemExit(f"Unexpected health response: {response.status} {body}")
           PY
+            # Expose the new API only after its private checks have passed.
+            docker compose -f compose.yml up -d caddy </dev/null
+            docker compose -f compose.yml restart caddy </dev/null
+            verify_running_image caddy ""
           fi
 
           wait_for_url() {
@@ -381,6 +677,7 @@ jobs:
 
 
       - name: Cleanup old GHCR images
+        if: env.SERVICE != 'preflight'
         env:
           SERVICE: ${{ env.SERVICE }}
           KEEP_GHCR_IMAGES: ${{ env.KEEP_GHCR_IMAGES }}
@@ -406,6 +703,12 @@ jobs:
           image = os.environ.get("IMAGE", "")
           keep = int(os.environ.get("KEEP_GHCR_IMAGES", "3"))
           token = os.environ.get("GHCR_CLEANUP_TOKEN", "").strip()
+
+          if service in {"api", "all"}:
+              # Keep the pre-cutover API and worker images available for a
+              # schema rollback, even when they fall outside the age limit.
+              print("Retaining API and worker images for the migration rollback window.")
+              raise SystemExit(0)
 
           if service == "caddy":
               print("Caddy deploy does not publish a GHCR image; skipping GHCR image cleanup.")

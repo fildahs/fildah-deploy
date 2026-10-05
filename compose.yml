@@ -13,6 +13,7 @@ x-api-secrets: &api-secrets
   OPAY_SECRET_KEY: ${OPAY_SECRET_KEY:-}
   OPAY_PUBLIC_KEY: ${OPAY_PUBLIC_KEY:-}
   OPAY_MERCHANT_ID: ${OPAY_MERCHANT_ID:-}
+  BILLING_TRIAL_KEY: ${BILLING_TRIAL_KEY:-}
   MEDIA_S3_ACCESS_KEY_ID: ${MEDIA_S3_ACCESS_KEY_ID:-}
   MEDIA_S3_SECRET_ACCESS_KEY: ${MEDIA_S3_SECRET_ACCESS_KEY:-}
 
@@ -42,7 +43,7 @@ services:
     environment:
       <<: *api-secrets
       DEBUG: "False"
-      ALLOWED_HOSTS: api.fildah.com
+      ALLOWED_HOSTS: api.fildah.com,console.fildah.com
       ALLOWED_ORIGINS: https://auth.fildah.com,https://www.fildah.com,https://healthscout.fildah.com,https://rxchat.fildah.com
       AUTH_ORIGINS: https://auth.fildah.com
       FILDAH_ORIGINS: https://www.fildah.com
@@ -80,7 +81,7 @@ services:
     environment:
       <<: *api-secrets
       DEBUG: "False"
-      ALLOWED_HOSTS: api.fildah.com
+      ALLOWED_HOSTS: api.fildah.com,console.fildah.com
       DATABASE_URL: postgres://${POSTGRES_USER:-fildah}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-fildah}
       DATABASE_SSL_REQUIRE: "False"
       QDRANT_URL: http://qdrant:6333
@@ -102,13 +103,16 @@ services:
       - qdrant
       - redis
 
+  # Photos and scanned PDFs (rx-56): no OCR models. A child measured 104 MB
+  # idle and 262 MB at most while making a 12 MP photo small; most of a read
+  # is waiting on DeepSeek, so four run at once.
   attachment-worker:
     extends:
       service: worker
     command: >-
       celery -A config worker --loglevel=info --queues=attachments
-      --concurrency=2 --prefetch-multiplier=1 --max-tasks-per-child=50
-    mem_limit: 2.5g
+      --concurrency=4 --prefetch-multiplier=1 --max-tasks-per-child=50
+    mem_limit: 1.5g
     cpus: "2"
 
   billing-beat:

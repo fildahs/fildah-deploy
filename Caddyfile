@@ -46,9 +46,19 @@ rxchat.fildah.com {
 
 api.fildah.com {
 	encode zstd gzip
-	redir / /admin/
 	reverse_proxy api:8000 {
 		flush_interval -1
+		header_up X-Real-IP {client_ip}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+}
+
+# Fildah Console: the admin, on its own host. Same API container; Django
+# serves only the Console's pages for this host (config/urls_console.py).
+console.fildah.com {
+	encode zstd gzip
+	reverse_proxy api:8000 {
 		header_up X-Real-IP {client_ip}
 		header_up X-Forwarded-Proto {scheme}
 		header_up X-Forwarded-Host {host}
