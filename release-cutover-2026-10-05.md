@@ -21,7 +21,9 @@ no deployment while repository variable `API_AUTO_DEPLOY` is absent or not
    draft alert levels clinician-approved.
 4. Inventory weekly subscriptions (including pending cycle changes), pending
    weekly payments, and provider subscriptions attached to weekly plans. The
-   workflow aborts before downtime if any exist. Reconcile each affected
+   workflow checks once before downtime and again after quiescence. It aborts
+   before downtime if any exist at first check, or restarts the old services
+   without migrating if an in-flight write appears at the second. Reconcile each affected
    customer and provider subscription before retrying; a migration alone does
    not change a live Paystack renewal.
 5. Schedule a maintenance window. Allow in-flight requests and Celery tasks to
@@ -36,8 +38,9 @@ no deployment while repository variable `API_AUTO_DEPLOY` is absent or not
    to publish. Verify `API_AUTO_DEPLOY` remains off.
 3. Dispatch `Deploy Production` manually with `service=api`,
    `image_tag=<API SHA>`, `source_repo=fildahs/fildah-api`, and
-   `commit_sha=<API SHA>`. The workflow checks weekly billing, stops Caddy and
-   API writers, saves the previous Compose/Caddy/`.env` files and a SQL backup,
+   `commit_sha=<API SHA>`. The workflow saves previous Compose/Caddy/`.env`
+   files before syncing new deploy config, checks weekly billing, stops Caddy
+   and API writers, checks weekly billing again, saves a quiesced SQL backup,
    updates image pins, migrates, starts API/workers, checks migrations, sets up
    Qdrant and checks private API health. Only then does it reopen Caddy.
 4. Check public API health, Console, Auth, RxChat, Fildah and HealthScout. Merge
