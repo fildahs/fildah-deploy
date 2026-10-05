@@ -137,8 +137,12 @@ jobs:
           present = False
           for line in Path('.env').read_text().splitlines():
               if line.startswith('BILLING_TRIAL_KEY='):
-                  value = line.partition('=')[2].strip().strip('"\'')
-                  present = bool(value)
+                  value = line.partition('=')[2].strip()
+                  if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
+                      value = value[1:-1]
+                  else:
+                      value = value.split(' #', 1)[0]
+                  present = bool(value.strip()) and not value.lstrip().startswith('#')
                   break
           print(f"BILLING_TRIAL_KEY in host environment: {'present' if present else 'missing'}")
           if not present:
