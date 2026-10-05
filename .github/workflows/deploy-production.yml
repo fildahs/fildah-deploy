@@ -338,10 +338,21 @@ jobs:
               exit 1
             fi
 
-            worker_host="$(docker inspect --format '{{.Config.Hostname}}' "$worker_container_id")"
-            attachment_host="$(docker inspect --format '{{.Config.Hostname}}' \
-              "$(docker compose -f compose.yml ps -q attachment-worker)")"
+            if ! worker_host="$(docker inspect --format '{{.Config.Hostname}}' "$worker_container_id")"; then
+              restart_old_stack
+              exit 1
+            fi
+            if ! attachment_container_id="$(docker compose -f compose.yml ps -q attachment-worker)" \
+              || [ -z "$attachment_container_id" ]; then
+              restart_old_stack
+              exit 1
+            fi
+            if ! attachment_host="$(docker inspect --format '{{.Config.Hostname}}' "$attachment_container_id")"; then
+              restart_old_stack
+              exit 1
+            fi
             drain_ok=0
+            clear_checks=0
             for attempt in $(seq 1 18); do
               if docker compose -f compose.yml exec -T worker \
                 python - "celery@$worker_host" "celery@$attachment_host" <<'PY'
@@ -375,8 +386,13 @@ jobs:
               raise SystemExit(1)
           PY
               then
-                drain_ok=1
-                break
+                clear_checks=$((clear_checks + 1))
+                if [ "$clear_checks" -ge 2 ]; then
+                  drain_ok=1
+                  break
+                fi
+              else
+                clear_checks=0
               fi
               sleep 10
             done

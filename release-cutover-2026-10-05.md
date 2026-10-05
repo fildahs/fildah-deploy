@@ -36,8 +36,9 @@ no deployment while repository variable `API_AUTO_DEPLOY` is absent or not
    queues, verify no active tasks remain, and allow in-flight requests to
    finish before dispatch. A worker task killed after the 180-second stop
    grace may not be replayed. The workflow stops Caddy/beat and the API first,
-   then waits for both queues and both workers' active, reserved and scheduled
-   work to clear. It restarts the old stack if they do not drain. After
+   then waits for two consecutive clear checks of both queues and both
+   workers' active, reserved and scheduled work. It restarts the old stack if
+   they do not drain or worker inspection fails. After
    worker stop it checks the Redis queues again, then backs up the quiesced
    database.
 
