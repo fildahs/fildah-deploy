@@ -131,6 +131,19 @@ jobs:
           set -euo pipefail
           cd /srv/fildah/deploy
           docker compose -f compose.yml config >/dev/null
+          python3 - <<'PY'
+          from pathlib import Path
+
+          present = False
+          for line in Path('.env').read_text().splitlines():
+              if line.startswith('BILLING_TRIAL_KEY='):
+                  value = line.partition('=')[2].strip().strip('"\'')
+                  present = bool(value)
+                  break
+          print(f"BILLING_TRIAL_KEY in host environment: {'present' if present else 'missing'}")
+          if not present:
+              raise SystemExit('Trial key must be prepared before cutover.')
+          PY
           df -Pk /srv/fildah
           for service_name in api worker attachment-worker billing-beat; do
             container_id="$(docker compose -f compose.yml ps -q "$service_name")"
@@ -172,7 +185,7 @@ jobs:
           import urllib.request
 
           required = (
-              "SECRET_KEY", "QDRANT_API_KEY", "BILLING_TRIAL_KEY",
+              "SECRET_KEY", "QDRANT_API_KEY",
               "PAYSTACK_SECRET_KEY", "PAYSTACK_PUBLIC_KEY", "BREVO_API_KEY",
           )
           optional = ("OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY")
