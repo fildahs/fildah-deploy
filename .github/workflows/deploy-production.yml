@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - .github/workflows/deploy-production.yml
   repository_dispatch:
     types:
       - deploy-service
@@ -15,6 +17,7 @@ on:
         type: choice
         options:
           - preflight
+          - resume-old
           - api
           - auth-web
           - caddy
@@ -68,10 +71,10 @@ jobs:
         run: |
           set -eu
           case "$SERVICE" in
-            preflight|api|auth-web|caddy|fildah-web|healthscout-web|rxchat-web|all) ;;
+            preflight|resume-old|api|auth-web|caddy|fildah-web|healthscout-web|rxchat-web|all) ;;
             *) echo "Unknown service: $SERVICE" >&2; exit 1 ;;
           esac
-          if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "caddy" ] || [ "$SERVICE" = "preflight" ]; then
+          if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "caddy" ] || [ "$SERVICE" = "preflight" ] || [ "$SERVICE" = "resume-old" ]; then
             if [ -n "$IMAGE_TAG" ]; then
               echo "image_tag is only supported for app image deployments" >&2
               exit 1
@@ -313,6 +316,22 @@ jobs:
             exit 1
           fi
 
+          if [ "$SERVICE" = "resume-old" ]; then
+            # Used only when the cutover stopped old writers before migration.
+            # The image pins in .env are still the old release at this point.
+            test ! -f "/srv/fildah/backups/deploy-37293062722-1/postgres.sql.gz"
+            docker compose -f compose.yml up -d api worker attachment-worker billing-beat caddy </dev/null
+            for attempt in $(seq 1 12); do
+              if curl -fsS --max-time 20 https://api.fildah.com/health/ >/dev/null; then
+                printf 'resume-old %s\n' "$BACKUP_ID" > "/srv/fildah/backups/$BACKUP_ID/deploy-complete"
+                exit 0
+              fi
+              sleep 5
+            done
+            echo "Old API did not become healthy after restart." >&2
+            exit 1
+          fi
+
           set_image_var() {
             var="$1"
             value="$2"
@@ -514,9 +533,9 @@ jobs:
             fi
             verify_empty_queues() {
               local celery_queued attachment_queued unacked count
-              celery_queued="$(docker compose -f compose.yml exec -T redis redis-cli --raw LLEN celery)" || return 1
-              attachment_queued="$(docker compose -f compose.yml exec -T redis redis-cli --raw LLEN attachments)" || return 1
-              unacked="$(docker compose -f compose.yml exec -T redis redis-cli --raw HLEN unacked)" || return 1
+              celery_queued="$(docker compose -f compose.yml exec -T redis redis-cli --raw LLEN celery </dev/null)" || return 1
+              attachment_queued="$(docker compose -f compose.yml exec -T redis redis-cli --raw LLEN attachments </dev/null)" || return 1
+              unacked="$(docker compose -f compose.yml exec -T redis redis-cli --raw HLEN unacked </dev/null)" || return 1
               for count in "$celery_queued" "$attachment_queued" "$unacked"; do
                 [[ "$count" =~ ^[0-9]+$ ]] || return 1
               done
@@ -673,11 +692,17 @@ jobs:
           verify_frontend_build rxchat-web https://rxchat.fildah.com/build.txt rxchat.fildah.com
           docker compose -f compose.yml ps </dev/null
           printf 'Deployed %s from %s at %s\n' "$SERVICE" "$SOURCE_REPO" "$COMMIT_SHA"
+          printf '%s %s\n' "$SERVICE" "$COMMIT_SHA" > "$backup_dir/deploy-complete"
           REMOTE
+
+          # An stdin-consuming subprocess can make remote bash see EOF and
+          # return success before the backup, migration and health checks run.
+          ssh $ssh_opts "$VPS_USER@$VPS_HOST" \
+            "test -f '/srv/fildah/backups/$BACKUP_ID/deploy-complete'"
 
 
       - name: Cleanup old GHCR images
-        if: env.SERVICE != 'preflight'
+        if: env.SERVICE != 'preflight' && env.SERVICE != 'resume-old'
         env:
           SERVICE: ${{ env.SERVICE }}
           KEEP_GHCR_IMAGES: ${{ env.KEEP_GHCR_IMAGES }}
