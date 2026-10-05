@@ -224,7 +224,7 @@ jobs:
               targets="rxchat-web"
               ;;
             all)
-              targets="api worker attachment-worker billing-beat auth-web fildah-web healthscout-web rxchat-web caddy"
+              targets="api worker attachment-worker billing-beat auth-web fildah-web healthscout-web rxchat-web"
               ;;
           esac
 
@@ -279,7 +279,7 @@ jobs:
             # This release contains non-compatible schema changes. Stop every
             # old writer before the backup and migration; leave data services up.
             docker compose -f compose.yml stop --timeout 180 \
-              billing-beat api worker attachment-worker </dev/null
+              caddy billing-beat api worker attachment-worker </dev/null
           fi
           docker compose -f compose.yml exec -T postgres sh -c \
             'pg_dump -U "${POSTGRES_USER:-fildah}" "${POSTGRES_DB:-fildah}"' \
@@ -316,8 +316,10 @@ jobs:
           else
             docker compose -f compose.yml pull $targets </dev/null
             docker compose -f compose.yml up -d --force-recreate $targets </dev/null
-            docker compose -f compose.yml up -d caddy </dev/null
-            docker compose -f compose.yml restart caddy </dev/null
+            if [ "$SERVICE" != "api" ] && [ "$SERVICE" != "all" ]; then
+              docker compose -f compose.yml up -d caddy </dev/null
+              docker compose -f compose.yml restart caddy </dev/null
+            fi
           fi
 
           verify_running_image() {
@@ -346,7 +348,7 @@ jobs:
               verify_running_image billing-beat "$worker_image"
               ;;
             all)
-              for service_name in api worker attachment-worker billing-beat auth-web fildah-web healthscout-web rxchat-web caddy; do
+              for service_name in api worker attachment-worker billing-beat auth-web fildah-web healthscout-web rxchat-web; do
                 verify_running_image "$service_name" ""
               done
               ;;
@@ -370,6 +372,10 @@ jobs:
               if response.status != 200 or "ok" not in body:
                   raise SystemExit(f"Unexpected health response: {response.status} {body}")
           PY
+            # Expose the new API only after its private checks have passed.
+            docker compose -f compose.yml up -d caddy </dev/null
+            docker compose -f compose.yml restart caddy </dev/null
+            verify_running_image caddy ""
           fi
 
           wait_for_url() {
