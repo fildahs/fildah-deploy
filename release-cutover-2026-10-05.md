@@ -16,7 +16,8 @@ no deployment while repository variable `API_AUTO_DEPLOY` is absent or not
    full database backup and restore, Postgres health, and the current image
    tags. Verify that both previous API and worker images are present and the
    running containers can be inspected; the workflow saves their exact image
-   IDs under unique local rollback tags before stopping them. Verify the host
+   IDs under unique local rollback tags and verifies attachment-worker and
+   billing-beat use the same worker image before stopping them. Verify the host
    `.env` has required credential **presence** without printing values. Keep
    its backup private.
 3. Confirm Care's governed corpus and delivery baseline, and record the
@@ -70,8 +71,9 @@ no deployment while repository variable `API_AUTO_DEPLOY` is absent or not
   Django migrations, then swap database names while all API writers stay
   stopped. Keep the failed database intact for investigation. This production
   database swap needs explicit owner approval. Restore the previous `.env`
-  and replace any mutable API/worker `:main` pins with the local rollback tags;
-  recreate the old containers only after the old schema and image IDs match.
+  and set both API/worker pins to the saved local rollback tags even if the old
+  pins looked immutable; the remote SHA tags may no longer be pullable.
+  Recreate the old containers only after the old schema and image IDs match.
 - The API-run config backup is the configuration present just before that run;
   the deploy repository has already been merged at this point. Keep the backup
   from the earlier deploy-main run as well for a full pre-release config rollback.

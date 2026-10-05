@@ -311,6 +311,17 @@ jobs:
             }
             preserve_running_image api fildah-api
             preserve_running_image worker fildah-api-worker
+            worker_container_id="$(docker compose -f compose.yml ps -q worker)"
+            worker_image_id="$(docker inspect --format '{{.Image}}' "$worker_container_id")"
+            for service_name in attachment-worker billing-beat; do
+              container_id="$(docker compose -f compose.yml ps -q "$service_name")"
+              test -n "$container_id"
+              running_image_id="$(docker inspect --format '{{.Image}}' "$container_id")"
+              if [ "$running_image_id" != "$worker_image_id" ]; then
+                echo "$service_name does not run the worker rollback image; reconcile before cutover." >&2
+                exit 1
+              fi
+            done
             # This release contains non-compatible schema changes. Stop every
             # old writer before the backup and migration; leave data services up.
             docker compose -f compose.yml stop --timeout 180 \
