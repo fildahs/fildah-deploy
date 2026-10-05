@@ -63,6 +63,9 @@ no deployment while repository variable `API_AUTO_DEPLOY` is absent or not
   API writers stay stopped. Keep the failed database intact for investigation.
   This production database swap needs explicit owner approval. Recreate the
   old containers only after the old schema and image pins match.
+- The API-run config backup is the configuration present just before that run;
+  the deploy repository has already been merged at this point. Keep the backup
+  from the earlier deploy-main run as well for a full pre-release config rollback.
 - Once public traffic has reopened, restoring the pre-cutover database would
   discard new customer writes. Resolve an incident with a forward fix or a
   write-aware reconciliation plan instead of blindly restoring that snapshot.
