@@ -79,9 +79,9 @@ guard or rely on `billing.0014` to cancel a provider renewal.
 
 - A weekly preflight failure leaves the old site running. Resolve the listed
   counts before retrying.
-- A Celery drain failure after the API stops restarts the old stack. A late
-  queue item found after worker stop
-  restarts the full old stack. Investigate the remaining work before retrying.
+- A Celery drain failure after the API stops, a worker-stop error, or a Redis
+  queue probe failure after worker stop attempts to restart the full old stack.
+  Investigate remaining work or a failed restart before retrying.
 - A backup or migration failure after quiescence leaves Caddy and API writers
   stopped. **Do not start the old API against a partly migrated database.**
   Preserve the backup path printed by the workflow and inspect the failure.

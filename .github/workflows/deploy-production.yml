@@ -322,11 +322,21 @@ jobs:
                 exit 1
               fi
             done
+            restart_old_stack() {
+              docker compose -f compose.yml up -d \
+                api worker attachment-worker billing-beat caddy </dev/null
+            }
             # Stop new requests and scheduled jobs before stopping the API;
             # leave workers running until API requests can no longer enqueue.
             # All old writers must stop before backup and migration.
-            docker compose -f compose.yml stop --timeout 180 caddy billing-beat </dev/null
-            docker compose -f compose.yml stop --timeout 180 api </dev/null
+            if ! docker compose -f compose.yml stop --timeout 180 caddy billing-beat </dev/null; then
+              restart_old_stack
+              exit 1
+            fi
+            if ! docker compose -f compose.yml stop --timeout 180 api </dev/null; then
+              restart_old_stack
+              exit 1
+            fi
 
             worker_host="$(docker inspect --format '{{.Config.Hostname}}' "$worker_container_id")"
             attachment_host="$(docker inspect --format '{{.Config.Hostname}}' \
@@ -372,24 +382,33 @@ jobs:
             done
             if [ "$drain_ok" != "1" ]; then
               echo "Celery did not drain after API stop; restarting the old stack." >&2
-              docker compose -f compose.yml up -d api worker attachment-worker billing-beat caddy </dev/null
+              restart_old_stack
               exit 1
             fi
-            docker compose -f compose.yml stop --timeout 180 worker attachment-worker </dev/null
-            celery_queued="$(docker compose -f compose.yml exec -T redis redis-cli --raw LLEN celery)"
-            attachment_queued="$(docker compose -f compose.yml exec -T redis redis-cli --raw LLEN attachments)"
-            unacked="$(docker compose -f compose.yml exec -T redis redis-cli --raw HLEN unacked)"
-            for count in "$celery_queued" "$attachment_queued" "$unacked"; do
-              [[ "$count" =~ ^[0-9]+$ ]] || exit 1
-            done
-            if [ "$celery_queued" -ne 0 ] || [ "$attachment_queued" -ne 0 ] || [ "$unacked" -ne 0 ]; then
-              echo "Celery received work during worker stop; restarting the old release." >&2
-              docker compose -f compose.yml up -d api worker attachment-worker billing-beat caddy </dev/null
+            if ! docker compose -f compose.yml stop --timeout 180 worker attachment-worker </dev/null; then
+              restart_old_stack
+              exit 1
+            fi
+            verify_empty_queues() {
+              local celery_queued attachment_queued unacked count
+              celery_queued="$(docker compose -f compose.yml exec -T redis redis-cli --raw LLEN celery)" || return 1
+              attachment_queued="$(docker compose -f compose.yml exec -T redis redis-cli --raw LLEN attachments)" || return 1
+              unacked="$(docker compose -f compose.yml exec -T redis redis-cli --raw HLEN unacked)" || return 1
+              for count in "$celery_queued" "$attachment_queued" "$unacked"; do
+                [[ "$count" =~ ^[0-9]+$ ]] || return 1
+              done
+              printf 'Post-stop Celery: default=%s attachments=%s unacked=%s\n' \
+                "$celery_queued" "$attachment_queued" "$unacked"
+              [ "$celery_queued" -eq 0 ] && [ "$attachment_queued" -eq 0 ] && [ "$unacked" -eq 0 ]
+            }
+            if ! verify_empty_queues; then
+              echo "Celery queue check failed after worker stop; restarting the old release." >&2
+              restart_old_stack
               exit 1
             fi
             if ! check_weekly_state; then
               echo "Weekly state changed during quiescence; restarting the old image without migrating." >&2
-              docker compose -f compose.yml up -d api worker attachment-worker billing-beat caddy </dev/null
+              restart_old_stack
               exit 1
             fi
           fi
