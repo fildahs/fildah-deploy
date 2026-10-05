@@ -8,6 +8,13 @@ no deployment while repository variable `API_AUTO_DEPLOY` is absent or not
 
 ## Before the window
 
+With separate owner approval for VPS SSH, dispatch this workflow from
+`eco-integration` with `service=preflight` and no image tag before merging.
+That mode only reads the current VPS configuration, running image IDs, disk
+space, database migrations and weekly counts, credential presence, and Qdrant
+collection status; it skips config sync, backup, image cleanup and deployment.
+It does not establish clinical corpus governance or message delivery quality.
+
 1. Require green checks on the exact API, RxChat web, Auth, Fildah web and
    HealthScout commits. RxChat CI needs a credential with read access to the
    private API contract. Record all image SHAs and the current production image

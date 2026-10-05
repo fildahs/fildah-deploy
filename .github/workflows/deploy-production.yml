@@ -14,6 +14,7 @@ on:
         required: true
         type: choice
         options:
+          - preflight
           - api
           - auth-web
           - caddy
@@ -67,10 +68,10 @@ jobs:
         run: |
           set -eu
           case "$SERVICE" in
-            api|auth-web|caddy|fildah-web|healthscout-web|rxchat-web|all) ;;
+            preflight|api|auth-web|caddy|fildah-web|healthscout-web|rxchat-web|all) ;;
             *) echo "Unknown service: $SERVICE" >&2; exit 1 ;;
           esac
-          if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "caddy" ]; then
+          if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "caddy" ] || [ "$SERVICE" = "preflight" ]; then
             if [ -n "$IMAGE_TAG" ]; then
               echo "image_tag is only supported for app image deployments" >&2
               exit 1
@@ -121,7 +122,86 @@ jobs:
             -o ConnectTimeout=20 \
             "$VPS_USER@$VPS_HOST" "true"
 
+      - name: Read-only production preflight
+        if: env.SERVICE == 'preflight'
+        run: |
+          set -eu
+          ssh_opts="-4 -i ~/.ssh/fildah_vps -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
+          ssh $ssh_opts "$VPS_USER@$VPS_HOST" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /srv/fildah/deploy
+          docker compose -f compose.yml config >/dev/null
+          df -Pk /srv/fildah
+          for service_name in api worker attachment-worker billing-beat; do
+            container_id="$(docker compose -f compose.yml ps -q "$service_name")"
+            test -n "$container_id"
+            printf '%s ' "$service_name"
+            docker inspect --format '{{.Config.Image}} {{.Image}}' "$container_id"
+          done
+          docker compose -f compose.yml exec -T postgres sh -c \
+            'psql -X -U "${POSTGRES_USER:-fildah}" -d "${POSTGRES_DB:-fildah}" -At -v ON_ERROR_STOP=1' <<'SQL'
+          SELECT 'database_bytes', pg_database_size(current_database());
+          SELECT 'applied_migration', app, max(name) FROM django_migrations
+            WHERE app IN ('billing','care','chat','rxchat','identity') GROUP BY app ORDER BY app;
+          SELECT 'provider_plans', provider, billing_cycle, count(*),
+            count(*) FILTER (WHERE is_active) FROM billing_providerplan
+            GROUP BY provider, billing_cycle ORDER BY provider, billing_cycle;
+          SQL
+          weekly_counts="$(docker compose -f compose.yml exec -T postgres sh -c \
+            'psql -X -U "${POSTGRES_USER:-fildah}" -d "${POSTGRES_DB:-fildah}" -At -v ON_ERROR_STOP=1' <<'SQL'
+          SELECT
+            (SELECT count(*) FROM billing_subscription
+              WHERE billing_cycle='weekly' OR pending_billing_cycle='weekly'),
+            (SELECT count(*) FROM billing_paymenttransaction
+              WHERE billing_cycle='weekly' AND status='pending'),
+            (SELECT count(*) FROM billing_providersubscription s
+              JOIN billing_providerplan p ON p.id=s.provider_plan_id
+              WHERE p.billing_cycle='weekly' AND s.status NOT IN ('completed','cancelled'));
+          SQL
+          )"
+          IFS='|' read -r weekly_subs weekly_payments weekly_provider_subs <<< "$weekly_counts"
+          for count in "$weekly_subs" "$weekly_payments" "$weekly_provider_subs"; do
+            [[ "$count" =~ ^[0-9]+$ ]]
+          done
+          printf 'Weekly customer rows: subscriptions=%s pending_payments=%s live_provider_subscriptions=%s\n' \
+            "$weekly_subs" "$weekly_payments" "$weekly_provider_subs"
+          docker compose -f compose.yml exec -T api python - <<'PY'
+          import json
+          import os
+          import urllib.parse
+          import urllib.request
+
+          required = (
+              "SECRET_KEY", "QDRANT_API_KEY", "BILLING_TRIAL_KEY",
+              "PAYSTACK_SECRET_KEY", "PAYSTACK_PUBLIC_KEY", "BREVO_API_KEY",
+          )
+          optional = ("OPENROUTER_API_KEY", "DEEPSEEK_API_KEY", "OPENAI_API_KEY")
+          missing = []
+          for name in (*required, *optional):
+              present = bool(os.environ.get(name, "").strip())
+              print(f"{name}: {'present' if present else 'missing'}")
+              if name in required and not present:
+                  missing.append(name)
+          if missing:
+              raise SystemExit("Required credential presence check failed.")
+
+          collection = urllib.parse.quote(os.environ.get("QDRANT_COLLECTION", "RxChat"), safe="")
+          request = urllib.request.Request(
+              os.environ["QDRANT_URL"].rstrip("/") + "/collections/" + collection,
+              headers={"api-key": os.environ["QDRANT_API_KEY"]},
+          )
+          with urllib.request.urlopen(request, timeout=10) as response:
+              result = json.load(response)["result"]
+          print(f"Qdrant collection: status={result.get('status')} points={result.get('points_count')}")
+          PY
+          if [ "$weekly_subs" -ne 0 ] || [ "$weekly_payments" -ne 0 ] || [ "$weekly_provider_subs" -ne 0 ]; then
+            echo "Weekly customer rows require reconciliation before cutover." >&2
+            exit 1
+          fi
+          REMOTE
+
       - name: Sync deploy config to VPS
+        if: env.SERVICE != 'preflight'
         run: |
           set -eu
           ssh_opts="-4 -i ~/.ssh/fildah_vps -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
@@ -145,6 +225,7 @@ jobs:
             ./ "$VPS_USER@$VPS_HOST:/srv/fildah/deploy/"
 
       - name: Align VPS deploy checkout
+        if: env.SERVICE != 'preflight'
         run: |
           set -eu
           ssh_opts="-4 -i ~/.ssh/fildah_vps -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
@@ -186,6 +267,7 @@ jobs:
           REMOTE
 
       - name: Deploy selected service
+        if: env.SERVICE != 'preflight'
         run: |
           set -eu
           ssh_opts="-4 -i ~/.ssh/fildah_vps -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
@@ -570,6 +652,7 @@ jobs:
 
 
       - name: Cleanup old GHCR images
+        if: env.SERVICE != 'preflight'
         env:
           SERVICE: ${{ env.SERVICE }}
           KEEP_GHCR_IMAGES: ${{ env.KEEP_GHCR_IMAGES }}
