@@ -51,6 +51,8 @@ no deployment while repository variable `API_AUTO_DEPLOY` is absent or not
    PWA. Record elapsed downtime and the live build SHAs.
 5. Leave `API_AUTO_DEPLOY` off until the owner explicitly chooses to resume
    automatic production dispatch for later API merges.
+   The release workflow retains old API and worker GHCR images during this
+   migration window; remove them only after the rollback window is closed.
 
 ## Failure and rollback
 

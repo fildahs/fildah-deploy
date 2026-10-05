@@ -474,6 +474,12 @@ jobs:
           keep = int(os.environ.get("KEEP_GHCR_IMAGES", "3"))
           token = os.environ.get("GHCR_CLEANUP_TOKEN", "").strip()
 
+          if service in {"api", "all"}:
+              # Keep the pre-cutover API and worker images available for a
+              # schema rollback, even when they fall outside the age limit.
+              print("Retaining API and worker images for the migration rollback window.")
+              raise SystemExit(0)
+
           if service == "caddy":
               print("Caddy deploy does not publish a GHCR image; skipping GHCR image cleanup.")
               raise SystemExit(0)
