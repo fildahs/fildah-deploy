@@ -241,6 +241,27 @@ jobs:
             fi
           fi
 
+          backup_root="/srv/fildah/backups"
+          backup_dir="$backup_root/deploy-$(date -u +%Y%m%dT%H%M%SZ)"
+          mkdir -p "$backup_dir"
+          chmod 700 "$backup_dir"
+          # Keep the previous image pins with the database backup. Changing
+          # .env before this point would make a rollback start the new image.
+          cp compose.yml Caddyfile .env "$backup_dir"/
+          docker compose -f compose.yml config >/dev/null
+
+          if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
+            # This release contains non-compatible schema changes. Stop every
+            # old writer before the backup and migration; leave data services up.
+            docker compose -f compose.yml stop --timeout 180 \
+              billing-beat api worker attachment-worker </dev/null
+          fi
+          docker compose -f compose.yml exec -T postgres sh -c \
+            'pg_dump -U "${POSTGRES_USER:-fildah}" "${POSTGRES_DB:-fildah}"' \
+            </dev/null | gzip > "$backup_dir/postgres.sql.gz"
+          gzip -t "$backup_dir/postgres.sql.gz"
+          echo "Pre-deployment backup: $backup_dir"
+
           case "$SERVICE" in
             api)
               set_image_var FILDAH_API_IMAGE "$IMAGE"
@@ -260,16 +281,6 @@ jobs:
               ;;
           esac
 
-          backup_root="/srv/fildah/backups"
-          backup_dir="$backup_root/deploy-$(date -u +%Y%m%dT%H%M%SZ)"
-          mkdir -p "$backup_dir"
-          chmod 700 "$backup_dir"
-          cp compose.yml Caddyfile .env "$backup_dir"/
-          docker compose -f compose.yml exec -T postgres sh -c \
-            'pg_dump -U "${POSTGRES_USER:-fildah}" "${POSTGRES_DB:-fildah}"' \
-            </dev/null | gzip > "$backup_dir/postgres.sql.gz"
-
-          docker compose -f compose.yml config >/dev/null
           if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
             docker compose -f compose.yml run --rm --no-deps api \
               python manage.py migrate --noinput </dev/null
