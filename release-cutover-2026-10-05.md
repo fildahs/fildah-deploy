@@ -66,7 +66,8 @@ guard or rely on `billing.0014` to cancel a provider renewal.
 1. Merge the deploy repository's release PR. Its `main` push updates the VPS
    deploy checkout and Caddy configuration. Verify the deployment workflow.
 2. Merge the API PR. Wait for both API images tagged with that exact commit SHA
-   to publish. Verify `API_AUTO_DEPLOY` remains off.
+   to publish. Use the resulting `main` commit SHA, which may differ from the
+   PR head after a squash or merge commit. Verify `API_AUTO_DEPLOY` remains off.
 3. Dispatch `Deploy Production` manually with `service=api`,
    `image_tag=<API SHA>`, `source_repo=fildahs/fildah-api`, and
    `commit_sha=<API SHA>`. The workflow saves previous Compose/Caddy/`.env`
