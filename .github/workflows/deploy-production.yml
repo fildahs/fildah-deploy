@@ -150,7 +150,7 @@ jobs:
                           break
                   if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
                       value = value[1:-1]
-                  present = bool(value.strip()) and not value.lstrip().startswith('#')
+                  present = bool(value.strip())
                   break
           print(f"BILLING_TRIAL_KEY in host environment: {'present' if present else 'missing'}")
           if not present:
