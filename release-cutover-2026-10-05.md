@@ -38,6 +38,18 @@ no deployment while repository variable `API_AUTO_DEPLOY` is absent or not
    grace may not be replayed. The workflow stops Caddy and all API writers,
    then backs up the quiesced database.
 
+### If the weekly preflight finds customer rows
+
+Keep the old release serving. Export the affected local subscription IDs,
+pending payment IDs and live provider subscription IDs to a private operator
+record, not a public Actions log. For each customer, compare the local cycle,
+next payment date and provider status; agree and carry out the monthly change or
+cancel the weekly renewal at Paystack, then reconcile the local record and any
+pending payment without deleting its history. Verify the provider result before
+marking a local provider subscription completed or cancelled. Repeat the
+read-only preflight until all three counts are zero. Do not bypass the workflow
+guard or rely on `billing.0014` to cancel a provider renewal.
+
 ## Order
 
 1. Merge the deploy repository's release PR. Its `main` push updates the VPS
