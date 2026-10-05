@@ -322,10 +322,12 @@ jobs:
                 exit 1
               fi
             done
-            # This release contains non-compatible schema changes. Stop every
-            # old writer before the backup and migration; leave data services up.
-            docker compose -f compose.yml stop --timeout 180 \
-              caddy billing-beat api worker attachment-worker </dev/null
+            # Stop new requests and scheduled jobs before stopping the API;
+            # leave workers running until API requests can no longer enqueue.
+            # All old writers must stop before backup and migration.
+            docker compose -f compose.yml stop --timeout 180 caddy billing-beat </dev/null
+            docker compose -f compose.yml stop --timeout 180 api </dev/null
+            docker compose -f compose.yml stop --timeout 180 worker attachment-worker </dev/null
             if ! check_weekly_state; then
               echo "Weekly state changed during quiescence; restarting the old image without migrating." >&2
               docker compose -f compose.yml up -d api worker attachment-worker billing-beat caddy </dev/null

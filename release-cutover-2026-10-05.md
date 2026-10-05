@@ -32,9 +32,11 @@ no deployment while repository variable `API_AUTO_DEPLOY` is absent or not
    not change a live Paystack renewal.
    Checkout may reactivate an inactive Paystack plan mapping by owner decision;
    use the plan or provider checkout switch when sales must be closed.
-5. Schedule a maintenance window. Allow in-flight requests and Celery tasks to
-   finish before dispatch. The workflow stops Caddy and all API writers with
-   a 180-second grace period, then backs up the quiesced database.
+5. Schedule a maintenance window. Drain the default and attachment Celery
+   queues, verify no active tasks remain, and allow in-flight requests to
+   finish before dispatch. A worker task killed after the 180-second stop
+   grace may not be replayed. The workflow stops Caddy and all API writers,
+   then backs up the quiesced database.
 
 ## Order
 
