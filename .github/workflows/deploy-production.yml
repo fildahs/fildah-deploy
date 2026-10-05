@@ -371,8 +371,8 @@ jobs:
               sleep 10
             done
             if [ "$drain_ok" != "1" ]; then
-              echo "Celery did not drain after API stop; restarting old ingress and API." >&2
-              docker compose -f compose.yml up -d api billing-beat caddy </dev/null
+              echo "Celery did not drain after API stop; restarting the old stack." >&2
+              docker compose -f compose.yml up -d api worker attachment-worker billing-beat caddy </dev/null
               exit 1
             fi
             docker compose -f compose.yml stop --timeout 180 worker attachment-worker </dev/null
