@@ -296,6 +296,21 @@ jobs:
           docker compose -f compose.yml config >/dev/null
 
           if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
+            # A previous pin may be the mutable :main tag. Keep the exact
+            # images currently running on this VPS under unique local tags.
+            preserve_running_image() {
+              service_name="$1"
+              package="$2"
+              container_id="$(docker compose -f compose.yml ps -q "$service_name")"
+              test -n "$container_id"
+              image_id="$(docker inspect --format '{{.Image}}' "$container_id")"
+              docker image inspect "$image_id" >/dev/null
+              rollback_tag="ghcr.io/fildahs/${package}:rollback-${BACKUP_ID}"
+              docker tag "$image_id" "$rollback_tag"
+              printf '%s=%s\n' "$service_name" "$rollback_tag" >> "$backup_dir/rollback-images"
+            }
+            preserve_running_image api fildah-api
+            preserve_running_image worker fildah-api-worker
             # This release contains non-compatible schema changes. Stop every
             # old writer before the backup and migration; leave data services up.
             docker compose -f compose.yml stop --timeout 180 \

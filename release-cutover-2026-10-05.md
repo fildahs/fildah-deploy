@@ -14,8 +14,11 @@ no deployment while repository variable `API_AUTO_DEPLOY` is absent or not
    pins before merging.
 2. Confirm the production database's applied migrations, free disk space for a
    full database backup and restore, Postgres health, and the current image
-   tags. Verify the host `.env` has required credential **presence** without
-   printing values. Keep its backup private.
+   tags. Verify that both previous API and worker images are present and the
+   running containers can be inspected; the workflow saves their exact image
+   IDs under unique local rollback tags before stopping them. Verify the host
+   `.env` has required credential **presence** without printing values. Keep
+   its backup private.
 3. Confirm Care's governed corpus and delivery baseline, and record the
    owner's decision to open Care before clinical sign-off. Do not call its
    draft alert levels clinician-approved.
@@ -62,11 +65,13 @@ no deployment while repository variable `API_AUTO_DEPLOY` is absent or not
   stopped. **Do not start the old API against a partly migrated database.**
   Preserve the backup path printed by the workflow and inspect the failure.
 - Before public traffic reopens, a database rollback uses the saved SQL backup
-  and previous `.env` image pins. Restore the SQL into a *new* database first,
-  verify table counts and Django migrations, then swap database names while all
-  API writers stay stopped. Keep the failed database intact for investigation.
-  This production database swap needs explicit owner approval. Recreate the
-  old containers only after the old schema and image pins match.
+  and the exact old API/worker images listed in that run's `rollback-images`
+  file. Restore the SQL into a *new* database first, verify table counts and
+  Django migrations, then swap database names while all API writers stay
+  stopped. Keep the failed database intact for investigation. This production
+  database swap needs explicit owner approval. Restore the previous `.env`
+  and replace any mutable API/worker `:main` pins with the local rollback tags;
+  recreate the old containers only after the old schema and image IDs match.
 - The API-run config backup is the configuration present just before that run;
   the deploy repository has already been merged at this point. Keep the backup
   from the earlier deploy-main run as well for a full pre-release config rollback.
