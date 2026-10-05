@@ -58,6 +58,7 @@ jobs:
       GHCR_CLEANUP_TOKEN: ${{ secrets.GHCR_CLEANUP_TOKEN }}
       SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
       KEEP_GHCR_IMAGES: ${{ vars.KEEP_GHCR_IMAGES || '10' }}
+      BACKUP_ID: deploy-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Check out deploy config
         uses: actions/checkout@v4
@@ -124,6 +125,18 @@ jobs:
         run: |
           set -eu
           ssh_opts="-4 -i ~/.ssh/fildah_vps -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=20"
+          ssh $ssh_opts "$VPS_USER@$VPS_HOST" BACKUP_ID="$BACKUP_ID" 'bash -se' <<'REMOTE'
+          set -euo pipefail
+          cd /srv/fildah/deploy
+          backup_dir="/srv/fildah/backups/$BACKUP_ID"
+          mkdir -p "$backup_dir"
+          chmod 700 "$backup_dir"
+          for file in compose.yml Caddyfile .env; do
+            test -f "$file"
+            cp -p "$file" "$backup_dir/$file"
+          done
+          git rev-parse HEAD > "$backup_dir/previous-deploy-commit" 2>/dev/null || true
+          REMOTE
           rsync -az --delete \
             --filter=':- .gitignore' \
             --exclude='.git/' \
@@ -183,6 +196,7 @@ jobs:
             GHCR_READ_TOKEN="$GHCR_READ_TOKEN" \
             SOURCE_REPO="$SOURCE_REPO" \
             COMMIT_SHA="$COMMIT_SHA" \
+            BACKUP_ID="$BACKUP_ID" \
             'bash -se' <<'REMOTE'
           set -euo pipefail
           cd /srv/fildah/deploy
@@ -241,10 +255,9 @@ jobs:
             fi
           fi
 
-          if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
+          check_weekly_state() {
             # The monthly-only migration changes weekly customer state and
             # cannot cancel an existing subscription at the payment provider.
-            # Resolve these records explicitly before taking the site down.
             weekly_counts="$(docker compose -f compose.yml exec -T postgres sh -c \
               'psql -X -U "${POSTGRES_USER:-fildah}" -d "${POSTGRES_DB:-fildah}" -At -v ON_ERROR_STOP=1' <<'SQL'
           SELECT
@@ -256,23 +269,30 @@ jobs:
               JOIN billing_providerplan p ON p.id=s.provider_plan_id
               WHERE p.billing_cycle='weekly' AND s.status NOT IN ('completed','cancelled'));
           SQL
-            )"
-            IFS='|' read -r weekly_subs weekly_payments weekly_provider_subs <<< "$weekly_counts"
+            )" || return 1
+            IFS='|' read -r weekly_subs weekly_payments weekly_provider_subs <<< "$weekly_counts" || return 1
+            for count in "$weekly_subs" "$weekly_payments" "$weekly_provider_subs"; do
+              [[ "$count" =~ ^[0-9]+$ ]] || return 1
+            done
             printf 'Weekly preflight: subscriptions=%s pending_payments=%s live_provider_subscriptions=%s\n' \
               "$weekly_subs" "$weekly_payments" "$weekly_provider_subs"
             if [ "$weekly_subs" -ne 0 ] || [ "$weekly_payments" -ne 0 ] || [ "$weekly_provider_subs" -ne 0 ]; then
               echo "Resolve weekly customer records before the monthly-only migration." >&2
-              exit 1
+              return 1
             fi
+          }
+
+          if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
+            # Fast check before downtime; a second check below closes the race
+            # with requests that were in flight while these services stopped.
+            check_weekly_state || exit 1
           fi
 
           backup_root="/srv/fildah/backups"
-          backup_dir="$backup_root/deploy-$(date -u +%Y%m%dT%H%M%SZ)"
-          mkdir -p "$backup_dir"
-          chmod 700 "$backup_dir"
-          # Keep the previous image pins with the database backup. Changing
-          # .env before this point would make a rollback start the new image.
-          cp compose.yml Caddyfile .env "$backup_dir"/
+          backup_dir="$backup_root/$BACKUP_ID"
+          test -f "$backup_dir/.env"
+          test -f "$backup_dir/compose.yml"
+          test -f "$backup_dir/Caddyfile"
           docker compose -f compose.yml config >/dev/null
 
           if [ "$SERVICE" = "api" ] || [ "$SERVICE" = "all" ]; then
@@ -280,6 +300,11 @@ jobs:
             # old writer before the backup and migration; leave data services up.
             docker compose -f compose.yml stop --timeout 180 \
               caddy billing-beat api worker attachment-worker </dev/null
+            if ! check_weekly_state; then
+              echo "Weekly state changed during quiescence; restarting the old image without migrating." >&2
+              docker compose -f compose.yml up -d api worker attachment-worker billing-beat caddy </dev/null
+              exit 1
+            fi
           fi
           docker compose -f compose.yml exec -T postgres sh -c \
             'pg_dump -U "${POSTGRES_USER:-fildah}" "${POSTGRES_DB:-fildah}"' \
