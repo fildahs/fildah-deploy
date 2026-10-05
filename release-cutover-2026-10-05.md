@@ -26,6 +26,8 @@ no deployment while repository variable `API_AUTO_DEPLOY` is absent or not
    without migrating if an in-flight write appears at the second. Reconcile each affected
    customer and provider subscription before retrying; a migration alone does
    not change a live Paystack renewal.
+   Checkout may reactivate an inactive Paystack plan mapping by owner decision;
+   use the plan or provider checkout switch when sales must be closed.
 5. Schedule a maintenance window. Allow in-flight requests and Celery tasks to
    finish before dispatch. The workflow stops Caddy and all API writers with
    a 180-second grace period, then backs up the quiesced database.
