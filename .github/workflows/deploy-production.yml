@@ -327,7 +327,66 @@ jobs:
             # All old writers must stop before backup and migration.
             docker compose -f compose.yml stop --timeout 180 caddy billing-beat </dev/null
             docker compose -f compose.yml stop --timeout 180 api </dev/null
+
+            worker_host="$(docker inspect --format '{{.Config.Hostname}}' "$worker_container_id")"
+            attachment_host="$(docker inspect --format '{{.Config.Hostname}}' \
+              "$(docker compose -f compose.yml ps -q attachment-worker)")"
+            drain_ok=0
+            for attempt in $(seq 1 18); do
+              if docker compose -f compose.yml exec -T worker \
+                python - "celery@$worker_host" "celery@$attachment_host" <<'PY'
+          import os
+          import sys
+
+          import redis
+
+          from config.celery import app
+
+          expected = set(sys.argv[1:])
+          broker = redis.Redis.from_url(os.environ["CELERY_BROKER_URL"])
+          queued = {name: broker.llen(name) for name in ("celery", "attachments")}
+          unacked = broker.hlen("unacked")
+          inspect = app.control.inspect(destination=sorted(expected), timeout=5)
+          replies = {
+              "ping": inspect.ping() or {},
+              "active": inspect.active() or {},
+              "reserved": inspect.reserved() or {},
+              "scheduled": inspect.scheduled() or {},
+          }
+          if any(not expected.issubset(reply) for reply in replies.values()):
+              print("Celery drain: a worker did not answer; keeping the old release.")
+              raise SystemExit(1)
+          running = {
+              state: sum(len(replies[state][node]) for node in expected)
+              for state in ("active", "reserved", "scheduled")
+          }
+          print(f"Celery drain: queues={queued}, unacked={unacked}, workers={running}")
+          if any(queued.values()) or unacked or any(running.values()):
+              raise SystemExit(1)
+          PY
+              then
+                drain_ok=1
+                break
+              fi
+              sleep 10
+            done
+            if [ "$drain_ok" != "1" ]; then
+              echo "Celery did not drain after API stop; restarting old ingress and API." >&2
+              docker compose -f compose.yml up -d api billing-beat caddy </dev/null
+              exit 1
+            fi
             docker compose -f compose.yml stop --timeout 180 worker attachment-worker </dev/null
+            celery_queued="$(docker compose -f compose.yml exec -T redis redis-cli --raw LLEN celery)"
+            attachment_queued="$(docker compose -f compose.yml exec -T redis redis-cli --raw LLEN attachments)"
+            unacked="$(docker compose -f compose.yml exec -T redis redis-cli --raw HLEN unacked)"
+            for count in "$celery_queued" "$attachment_queued" "$unacked"; do
+              [[ "$count" =~ ^[0-9]+$ ]] || exit 1
+            done
+            if [ "$celery_queued" -ne 0 ] || [ "$attachment_queued" -ne 0 ] || [ "$unacked" -ne 0 ]; then
+              echo "Celery received work during worker stop; restarting the old release." >&2
+              docker compose -f compose.yml up -d api worker attachment-worker billing-beat caddy </dev/null
+              exit 1
+            fi
             if ! check_weekly_state; then
               echo "Weekly state changed during quiescence; restarting the old image without migrating." >&2
               docker compose -f compose.yml up -d api worker attachment-worker billing-beat caddy </dev/null

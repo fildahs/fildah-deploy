@@ -35,8 +35,11 @@ no deployment while repository variable `API_AUTO_DEPLOY` is absent or not
 5. Schedule a maintenance window. Drain the default and attachment Celery
    queues, verify no active tasks remain, and allow in-flight requests to
    finish before dispatch. A worker task killed after the 180-second stop
-   grace may not be replayed. The workflow stops Caddy and all API writers,
-   then backs up the quiesced database.
+   grace may not be replayed. The workflow stops Caddy/beat and the API first,
+   then waits for both queues and both workers' active, reserved and scheduled
+   work to clear. It restarts the old ingress/API if they do not drain. After
+   worker stop it checks the Redis queues again, then backs up the quiesced
+   database.
 
 ### If the weekly preflight finds customer rows
 
@@ -76,6 +79,9 @@ guard or rely on `billing.0014` to cancel a provider renewal.
 
 - A weekly preflight failure leaves the old site running. Resolve the listed
   counts before retrying.
+- A Celery drain failure after the API stops restarts the old ingress/API while
+  old workers continue running. A late queue item found after worker stop
+  restarts the full old stack. Investigate the remaining work before retrying.
 - A backup or migration failure after quiescence leaves Caddy and API writers
   stopped. **Do not start the old API against a partly migrated database.**
   Preserve the backup path printed by the workflow and inspect the failure.
